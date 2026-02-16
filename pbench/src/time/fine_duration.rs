@@ -1,19 +1,24 @@
+//! Precision module
+
 use std::{fmt as StdFmt, ops as StdOps, time::Duration};
 
 use crate::time::Formatter;
 
 /// [Picosecond](https://en.wikipedia.org/wiki/Picosecond)-precise [`Duration`].
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct FineDuration {
+pub struct FineDuration {
+    /// Picosecond precision
     pub picos: u128,
 }
 
 impl FineDuration {
+    /// Definition
     pub const ZERO: Self = Self { picos: 0 };
 
     /// Divide picos by a u64 divisor.
     #[inline]
-    pub fn div_u64(self, n: u64) -> Self {
+    #[must_use]
+    pub const fn div_u64(self, n: u64) -> Self {
         Self {
             picos: self.picos / n as u128,
         }
@@ -21,7 +26,8 @@ impl FineDuration {
 
     /// Multiply picos by a u64 factor.
     #[inline]
-    pub fn mul_u64(self, n: u64) -> Self {
+    #[must_use]
+    pub const fn mul_u64(self, n: u64) -> Self {
         Self {
             picos: self.picos * n as u128,
         }
@@ -29,6 +35,7 @@ impl FineDuration {
 
     /// Checked subtraction, returning `None` if `other > self`.
     #[inline]
+    #[must_use]
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         self.picos
             .checked_sub(other.picos)
@@ -77,16 +84,14 @@ impl StdOps::Sub for FineDuration {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Display formatting
-// ---------------------------------------------------------------------------
+// ===========================================================================
+//  Display formatting
+// ===========================================================================
 
-mod picos {
-    pub const NANOS: u128 = 1_000;
-    pub const MICROS: u128 = 1_000 * NANOS;
-    pub const MILLIS: u128 = 1_000 * MICROS;
-    pub const SEC: u128 = 1_000 * MILLIS;
-}
+const NANOS: u128 = 1_000;
+const MICROS: u128 = 1_000 * NANOS;
+const MILLIS: u128 = 1_000 * MICROS;
+const SEC: u128 = 1_000 * MILLIS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TimeScale {
@@ -98,35 +103,35 @@ enum TimeScale {
 }
 
 impl TimeScale {
-    fn from_picos(p: u128) -> Self {
-        if p < picos::NANOS {
+    pub const fn from_picos(p: u128) -> Self {
+        if p < NANOS {
             Self::PicoSec
-        } else if p < picos::MICROS {
+        } else if p < MICROS {
             Self::NanoSec
-        } else if p < picos::MILLIS {
+        } else if p < MILLIS {
             Self::MicroSec
-        } else if p < picos::SEC {
+        } else if p < SEC {
             Self::MilliSec
         } else {
             Self::Sec
         }
     }
 
-    fn picos(self) -> u128 {
+    pub const fn picos(self) -> u128 {
         match self {
             Self::PicoSec => 1,
 
-            Self::NanoSec => picos::NANOS,
+            Self::NanoSec => NANOS,
 
-            Self::MicroSec => picos::MICROS,
+            Self::MicroSec => MICROS,
 
-            Self::MilliSec => picos::MILLIS,
+            Self::MilliSec => MILLIS,
 
-            Self::Sec => picos::SEC,
+            Self::Sec => SEC,
         }
     }
 
-    fn suffix(self) -> &'static str {
+    pub const fn suffix(self) -> &'static str {
         match self {
             Self::PicoSec => "ps",
 
@@ -158,6 +163,7 @@ impl StdFmt::Display for FineDuration {
             10_u128.saturating_pow(sf)
         };
 
+        #[expect(clippy::cast_precision_loss)]
         let val: f64 = (((p * multiple) / scale.picos()) as f64) / multiple as f64;
         let mut s: String = Formatter::format_f64(val, sig_figs);
 

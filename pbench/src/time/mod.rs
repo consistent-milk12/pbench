@@ -1,6 +1,8 @@
-pub(crate) mod fine_duration;
-pub(crate) mod utils;
+//! Timeing infrastructure
 
-pub(crate) use fine_duration::FineDuration;
+pub mod fine_duration;
+pub mod utils;
 
-pub(crate) use utils::Formatter;
+pub use fine_duration::FineDuration;
+
+pub use utils::Formatter;
