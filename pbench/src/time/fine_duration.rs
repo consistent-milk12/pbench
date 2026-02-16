@@ -15,12 +15,15 @@ impl FineDuration {
     /// Definition
     pub const ZERO: Self = Self { picos: 0 };
 
+    /// Max representable duration (sentinel val)
+    pub const MAX: Self = Self { picos: u128::MAX };
+
     /// Divide picos by a u64 divisor.
     #[inline]
     #[must_use]
     pub const fn div_u64(self, n: u64) -> Self {
         Self {
-            picos: self.picos / n as u128,
+            picos: self.picos / (n as u128),
         }
     }
 
@@ -29,7 +32,7 @@ impl FineDuration {
     #[must_use]
     pub const fn mul_u64(self, n: u64) -> Self {
         Self {
-            picos: self.picos * n as u128,
+            picos: self.picos * (n as u128),
         }
     }
 
@@ -40,6 +43,13 @@ impl FineDuration {
         self.picos
             .checked_sub(other.picos)
             .map(|picos: u128| Self { picos })
+    }
+
+    /// Returns true if this duration is zero.
+    #[inline]
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.picos == 0
     }
 }
 
@@ -152,8 +162,6 @@ impl StdFmt::Display for FineDuration {
         let p: u128 = self.picos;
         let mut scale = TimeScale::from_picos(p);
 
-        // Display picoseconds as nanoseconds when we have enough sig figs —
-        // easier to read when values are shown alongside nanosecond-scale peers.
         if (scale == TimeScale::PicoSec) && (sig_figs > 3) {
             scale = TimeScale::NanoSec;
         }

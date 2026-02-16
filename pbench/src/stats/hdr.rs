@@ -47,7 +47,7 @@ impl HdrRecorder {
     /// Values exceeding `u64::MAX` are clamped to `u64::MAX`. The histogram
     /// auto-resizes for values above the initial max, so no data is lost.
     ///
-    /// Note: HDR histograms have a minimum trackable value of 1, so a recorded
+    /// NOTE: HDR histograms have a minimum trackable value of 1, so a recorded
     /// value of 0 is stored as 1 (a 1-picosecond error, negligible for timing).
     #[inline]
     pub fn record(&mut self, picos: u128) {

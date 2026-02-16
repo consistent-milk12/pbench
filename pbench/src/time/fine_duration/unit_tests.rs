@@ -1,4 +1,4 @@
-use super::*;
+use super::FineDuration;
 use std::time::Duration;
 
 #[test]
