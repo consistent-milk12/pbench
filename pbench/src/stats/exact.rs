@@ -78,13 +78,18 @@ impl ExactPercentiles {
     ///
     /// # Panics
     ///
-    /// Empty samples
+    /// Panics on empty samples or if the sum of all samples overflows `u128`.
     #[must_use]
     #[inline(always)]
     pub fn compute_mean(samples: &[u128]) -> u128 {
         assert!(!samples.is_empty(), "cannot compute mean of empty samples");
 
-        samples.iter().sum::<u128>() / (samples.len() as u128)
+        let sum: u128 = samples
+            .iter()
+            .try_fold(0_u128, |acc: u128, v: &u128| acc.checked_add(*v))
+            .expect("sum of samples overflowed u128 - values are corrupt or unrealistic");
+
+        sum / (samples.len() as u128)
     }
 
     /// Compute population standard deviation of pico values.
