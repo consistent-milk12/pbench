@@ -6,6 +6,7 @@
 
 pub(crate) mod exact;
 pub(crate) mod hdr;
+pub(crate) mod sample;
 
 use crate::{
     stats::{exact::ExactPercentiles, hdr::HdrRecorder},

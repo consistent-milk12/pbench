@@ -3,7 +3,7 @@
 use std::time::Instant;
 use std::{cmp::Ordering, hint as StdHint};
 
-use crate::time::{FineDuration, fence::Fence};
+use crate::time::{fence::Fence, FineDuration};
 
 /// Timer backed by the OS monotonic clock.
 #[derive(Clone, Copy, Debug)]

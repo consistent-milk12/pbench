@@ -14,7 +14,7 @@ use std::fmt as StdFmt;
 use std::thread as StdThread;
 use std::time::{Duration, Instant};
 
-use crate::time::{fence::Fence, FineDuration};
+use crate::time::{FineDuration, fence::Fence};
 
 // ===========================================================================
 //  TscUnavailable
@@ -94,7 +94,7 @@ impl Cpuid {
 
     /// Execute the CPUID instruction.
     fn query(leaf: u32) -> x86::CpuidResult {
-        x86::__cpuid(leaf)
+        unsafe { x86::__cpuid(leaf) }
     }
 }
 

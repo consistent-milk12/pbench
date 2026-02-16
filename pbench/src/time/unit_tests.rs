@@ -59,6 +59,31 @@ fn timer_best_available_works() {
 #[test]
 fn timer_precision_nonzero() {
     let timer: Timer = Timer::best_available();
-    let precision: FineDuration = timer.measure_precision();
+    let precision: FineDuration = timer.precision();
     assert!(!precision.is_zero(), "Timer precision must be non-zero");
+    assert!(
+        precision != FineDuration::MAX,
+        "precision should not be MAX sentinel"
+    );
+
+    // Verify caching: second call returns the same value.
+    let precision2: FineDuration = timer.precision();
+    assert_eq!(
+        precision, precision2,
+        "precision() must return cached value on second call"
+    );
+}
+
+#[test]
+fn timer_overhead_nonnegative() {
+    let timer: Timer = Timer::best_available();
+    let overhead: super::TimedOverhead = timer.bench_overhead();
+
+    // Overhead should be non-negative (zero is acceptable on very fast timers).
+    // Just verify it doesn't panic and returns a sane value.
+    assert!(
+        overhead.sample_loop.picos < 1_000_000_000_000,
+        "sample_loop overhead {} seems unreasonably large (>1µs)",
+        overhead.sample_loop
+    );
 }
