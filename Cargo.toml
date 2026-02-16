@@ -1,0 +1,3 @@
+[workspace]
+members = ["pbench", "pbench-macros"]
+resolver = "3"

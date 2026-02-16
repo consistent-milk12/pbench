@@ -1,0 +1,24 @@
+[package]
+name = "pbench"
+version = "0.1.0"
+edition = "2024"
+description = "Percentile-focused benchmarking for Rust"
+license = "MIT"
+
+[dependencies]
+pbench-macros = { path = "../pbench-macros" }
+hdrhistogram = "7.5.4"
+
+[dependencies.serde]
+version = "1.0.228"
+optional = true
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0.149"
+optional = true
+
+[features]
+default = []
+json = ["serde", "serde_json"]
+csv_output = []
