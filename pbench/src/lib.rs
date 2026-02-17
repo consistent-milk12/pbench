@@ -6,6 +6,7 @@
 // Tested functions only
 #![allow(clippy::inline_always)]
 
+pub mod bencher;
 pub mod config;
 pub mod stats;
 pub mod time;
