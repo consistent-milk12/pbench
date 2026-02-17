@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use crate::{
     config::ResolvedBenchOptions,
+    counter::{Counter, CounterKind, collection::CounterCollection},
     stats::{
         PercentileStats,
         sample::{RawSample, SampleCollection},
@@ -26,7 +27,24 @@ use crate::{
 const PRECISION_MULTIPLIER: u128 = 100;
 
 // =========================================================================
-//  BenchContext — internal shared state
+//  BenchResult - combined benchmark output
+// =========================================================================
+
+/// Combined results of a benchmark run.
+///
+/// Bundles percentile statistics with optional counter data for throughput
+/// display. Returned by [`BenchContext::finish`].
+pub(crate) struct BenchResult {
+    /// Percetile statistics computed from timing samples.
+    pub stats: PercentileStats,
+
+    /// Counter collection for throughput display, present only if
+    /// [`Bencher::counter`] was called before running.
+    pub counter: Option<CounterCollection>,
+}
+
+// =========================================================================
+//  BenchContext - internal shared state
 // =========================================================================
 
 /// Internal shared state for a single benchmark execution.
@@ -47,6 +65,20 @@ pub(crate) struct BenchContext {
 
     /// Collected results, set once after the sampling loop compltes.
     stats: Cell<Option<PercentileStats>>,
+
+    /// Counter info set by [`Bencher::counter`], captured as (count, kind).
+    ///
+    /// Follows last-write-wins: repeated calls overwrite the previous value.
+    counter_info: Cell<Option<(u64, CounterKind)>>,
+
+    /// Collected counter results, set alongside stats after sampling.
+    counter_result: Cell<Option<CounterCollection>>,
+
+    /// Guard enforing single-use semantics.
+    ///
+    /// Set to `true` after the first sampling run completes. Any
+    /// subsequent attempt to run via [`SamplingLoop::run_timed`] panics.
+    has_run: Cell<bool>,
 }
 
 impl BenchContext {
@@ -63,18 +95,24 @@ impl BenchContext {
             overhead,
             options,
             stats: Cell::new(None),
+            counter_info: Cell::new(None),
+            counter_result: Cell::new(None),
+            has_run: Cell::new(false),
         }
     }
 
     /// Consume the context and return collected stats (if any).
     #[must_use]
-    pub(crate) const fn finish(self) -> Option<PercentileStats> {
-        self.stats.into_inner()
+    pub(crate) fn finish(self) -> Option<BenchResult> {
+        let stats: Option<PercentileStats> = self.stats.into_inner();
+        let counter: Option<CounterCollection> = self.counter_result.into_inner();
+
+        stats.map(|s: PercentileStats| BenchResult { stats: s, counter })
     }
 }
 
 // =========================================================================
-//  Bencher — thin public API
+//  Bencher
 // =========================================================================
 
 /// Public benchmark handle passed to user-defined benchmark functions.
@@ -92,6 +130,37 @@ impl<'ctx> Bencher<'ctx> {
     #[must_use]
     pub(crate) const fn new(context: &'ctx BenchContext) -> Self {
         Self { context }
+    }
+
+    /// Attach a throughput counter to this benchmark.
+    ///
+    /// The counter value represents units processed per iteration
+    /// (bytes, items, characters, or CPU cycles). The benchmarking
+    /// harness records this alongside timing data so output formatters
+    /// can display throughput ("1.234 GB/s").
+    ///
+    /// Current Design Limitations: The counter value is assumed constant across
+    /// all iterations and samples. For variable-input benchmarks (like
+    /// `with_inputs` generating differentsized data), the counter will
+    /// not reflect per-sample variation. I may work on a future `counter_fn`
+    /// API that will support dynamic per-iteration counts.
+    ///
+    /// Overwrite semantics: Calling this method multiple times
+    /// before running the benchmark replaces the previous counter
+    /// (last-write-wins). Only the final counter is used.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// bencher.counter(BytesCount::of_slice(&data)).bench_refs(|| {
+    ///     process(&data);
+    /// });
+    /// ``
+    #[expect(clippy::needless_pass_by_value)]
+    pub fn counter(&self, c: impl Counter) -> &Self {
+        self.context.counter_info.set(Some((c.count(), c.kind())));
+
+        self
     }
 
     /// Benchmark a closure that returns a value by reference semantics.
@@ -160,11 +229,9 @@ impl<'ctx> Bencher<'ctx> {
                     }
 
                     StdHint::black_box(&deferred);
+
                     let end: Instant = timer.now();
-
                     let elapsed: FineDuration = timer.elapsed(start, end);
-
-                    // `deferred` drops here — after timing.
                     drop(deferred);
 
                     elapsed
@@ -188,8 +255,6 @@ impl<'ctx> Bencher<'ctx> {
 
                     let end: u64 = timer.now_end();
                     let elapsed: FineDuration = timer.elapsed(start, end);
-
-                    // `deferred` drops here — after timing.
                     drop(deferred);
 
                     elapsed
@@ -222,7 +287,7 @@ impl<'ctx> Bencher<'ctx> {
 }
 
 // =========================================================================
-//  BencherWithInput — input-generating builder
+//  BencherWithInput
 // =========================================================================
 
 /// Builder returned by [`Bencher::with_inputs`].
@@ -261,8 +326,6 @@ impl<I, G: FnMut() -> I> BencherWithInput<'_, I, G> {
                     }
 
                     let mut deferred: Vec<R> = Vec::with_capacity(sample_size as usize);
-
-                    // Time only the benchmark work.
                     let start: Instant = timer.now();
 
                     for input in inputs {
@@ -379,7 +442,7 @@ impl<I, G: FnMut() -> I> BencherWithInput<'_, I, G> {
 }
 
 // =========================================================================
-//  Sampling loop — the core measurement algorithm
+//  Sampling loop - Core Measurement Algorithms
 // =========================================================================
 
 /// Unit struct containing core measurement algorithms.
@@ -392,15 +455,27 @@ impl SamplingLoop {
     /// measured [`FineDuration`] for that sample. The closure is responsible
     /// for starting/stopping the timer internally, which allows input
     /// generation and deferred drops to happen outside the timing window.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the context already been used for a sampling run.
+    /// Each [`BenchContext`] supports exactly one run.
     fn run_timed(ctx: &BenchContext, timed_body: &mut impl FnMut(u32) -> FineDuration) {
+        assert!(
+            !ctx.has_run.get(),
+            "BenchContext has already been used for a sampling run. Each context supports exactly one run"
+        );
+
         // Phase 1: Adaptive tuning
         let sample_size: u32 = ctx.options.sample_size.map_or_else(
             || Self::tune_sample_size(ctx, timed_body),
-            |fixed| fixed.max(1),
+            |fixed: u32| fixed.max(1),
         );
 
         // Phase 2: Collection
         Self::collect_samples(ctx, sample_size, timed_body);
+
+        ctx.has_run.set(true);
     }
 
     /// Adaptive tuning: double `sample_size` until sample duration exceeds
@@ -442,15 +517,9 @@ impl SamplingLoop {
     /// matching divan's loop semantics.
     ///
     /// Stop conditions (evaluated in order):
-    /// 1. Hard stop: `elapsed >= max_time` — always terminates.
-    /// 2. Continue: `samples_remaining > 0` — keep collecting.
-    /// 3. Floor: `elapsed < min_time` — keep collecting past
-    ///    `sample_count` until the minimum time budget is met.
-    ///
-    /// When `skip_ext_time` is `true`, elapsed tracks only the timed body
-    /// duration (excluding input generation, drops). When `false`, elapsed
-    /// tracks wall-clock time around the entire sample (including external
-    /// work).
+    /// 1. Hard stop: `elapsed >= max_time`
+    /// 2. Continue: `samples_remaining > 0`
+    /// 3. Floor: `elapsed < min_time`
     fn collect_samples(
         ctx: &BenchContext,
         sample_size: u32,
@@ -498,18 +567,47 @@ impl SamplingLoop {
             }
         }
 
-        Self::store_stats(ctx, &samples, sample_size);
+        // Build counter collection if a counter was attached.
+        //
+        // NOTE: Counter values are duplicated uniformly across all samples
+        // because current design assumes constant work per iter. Detailed
+        // explanation in [`Bencher::counter`] doc.
+        //
+        // TODO: Support dynamic per-sample counters via `counter_fn` for
+        // variable input benchmarks.
+        let counter_collection: Option<CounterCollection> =
+            ctx.counter_info
+                .get()
+                .map(|(count, kind): (u64, CounterKind)| {
+                    let mut collection: CounterCollection =
+                        CounterCollection::with_capacity(kind, samples.len());
+
+                    for _ in 0..samples.len() {
+                        collection.push(count);
+                    }
+
+                    collection
+                });
+
+        Self::store_stats(ctx, &samples, sample_size, counter_collection);
     }
 
     /// Compute and store percentile statistics from collected samples.
-    fn store_stats(ctx: &BenchContext, samples: &SampleCollection, sample_size: u32) {
+    fn store_stats(
+        ctx: &BenchContext,
+        samples: &SampleCollection,
+        sample_size: u32,
+        counter: Option<CounterCollection>,
+    ) {
         if samples.is_empty() {
             return;
         }
 
         let picos: Vec<u128> = samples.raw_picos();
         let stats: PercentileStats = PercentileStats::compute(&picos, sample_size);
+
         ctx.stats.set(Some(stats));
+        ctx.counter_result.set(counter);
     }
 }
 
@@ -541,8 +639,12 @@ pub(crate) fn run_bench_closure(
 
     let ctx: BenchContext = BenchContext::new(options);
     let bencher: Bencher<'_> = Bencher::new(&ctx);
+
     f(&bencher);
-    ctx.finish().expect("benchmark should have produced stats")
+
+    ctx.finish()
+        .expect("benchmark should have produced stats")
+        .stats
 }
 
 #[cfg(test)]

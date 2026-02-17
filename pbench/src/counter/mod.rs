@@ -63,7 +63,7 @@ pub trait Counter: Send + Sync {
 /// # Examples
 ///
 /// ```ignore
-/// // Chainable builder — `counter` takes `self` by value and returns `Self`.
+/// // Chainable builder: `counter` takes `&self` and returns `&Self`.
 /// bencher.counter(BytesCount::of_slice(&data)).bench_refs(|| {
 ///     process(&data);
 /// });
@@ -81,7 +81,7 @@ impl BytesCount {
 
     /// Count the byte length of a slice.
     ///
-    /// Computes `slice.len() * std::mem::size_of::<T>()`.
+    /// Computes `std::mem::size_of_val(slice)`.
     ///
     /// # Panics
     ///
