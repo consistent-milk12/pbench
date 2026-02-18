@@ -1,0 +1,5 @@
+error: repeated 'bench' option 'sample_count'
+ --> tests/compile_fail/duplicate_option.rs:3:36
+  |
+3 | #[pbench::bench(sample_count = 10, sample_count = 20)]
+  |                                    ^^^^^^^^^^^^^^^^^

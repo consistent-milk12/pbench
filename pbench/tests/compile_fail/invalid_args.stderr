@@ -1,0 +1,5 @@
+error: 'args' must be an array literal (e.g. args = [1, 2, 3])
+ --> tests/compile_fail/invalid_args.rs:3:17
+  |
+3 | #[pbench::bench(args = "not_an_array")]
+  |                 ^^^^^^^^^^^^^^^^^^^^^

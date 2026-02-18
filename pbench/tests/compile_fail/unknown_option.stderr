@@ -1,0 +1,7 @@
+error[E0560]: struct `BenchOptions` has no field named `unknown_option`
+ --> tests/compile_fail/unknown_option.rs:3:17
+  |
+3 | #[pbench::bench(unknown_option = 5)]
+  |                 ^^^^^^^^^^^^^^ `BenchOptions` does not have this field
+  |
+  = note: all struct fields are already assigned

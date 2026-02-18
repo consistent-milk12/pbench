@@ -18,6 +18,9 @@ features = ["derive"]
 version = "1.0.149"
 optional = true
 
+[dev-dependencies]
+trybuild = "1.0.116"
+
 [features]
 default = []
 json = ["serde", "serde_json"]

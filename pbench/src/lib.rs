@@ -18,9 +18,6 @@ pub(crate) mod util;
 
 pub use pbench_macros::{bench, bench_group};
 
-#[cfg(doc)]
-mod compile_fail;
-
 /// Private re-exports consumed by macro-generated code.
 ///
 /// **Do not use directly.** These items are public only because the
