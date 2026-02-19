@@ -5,12 +5,11 @@
 //! and filter/sort operations.
 
 use std::cmp::Ordering;
-use std::iter::Peekable;
-use std::str::Chars;
 
 use super::meta::EntryMeta;
 use super::{AnyBenchEntry, GroupEntry};
 use crate::cli::SortBy;
+use crate::util::sort::NaturalCmp;
 
 /// Hierarchical tree of benchmark entries organised by module path.
 ///
@@ -298,74 +297,6 @@ impl EntryTree {
 
             Self::Leaf { .. } => None,
         }
-    }
-}
-
-// =========================================================================
-//  Natural string comparison (numeric-aware)
-// =========================================================================
-
-/// Natural string comparison that sorts numeric subsequences by value.
-///
-/// So `"bench_2"` sorts before `"bench_10"` (unlike lexicographic order).
-///
-/// TODO: Move to `util/sort.rs` later.
-struct NaturalCmp;
-
-impl NaturalCmp {
-    /// Compare two strings with natural (numeric-aware) ordering.
-    fn compare(a: &str, b: &str) -> Ordering {
-        let mut a_chars: Peekable<Chars<'_>> = a.chars().peekable();
-        let mut b_chars: Peekable<Chars<'_>> = b.chars().peekable();
-
-        loop {
-            match (a_chars.peek(), b_chars.peek()) {
-                (None, None) => return Ordering::Equal,
-
-                (None, Some(_)) => return Ordering::Less,
-
-                (Some(_), None) => return Ordering::Greater,
-
-                (Some(&ac), Some(&bc)) => {
-                    if ac.is_ascii_digit() && bc.is_ascii_digit() {
-                        let a_num: u64 = Self::extract_number(&mut a_chars);
-                        let b_num: u64 = Self::extract_number(&mut b_chars);
-                        let cmp: Ordering = a_num.cmp(&b_num);
-
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    } else {
-                        a_chars.next();
-                        b_chars.next();
-
-                        let cmp: Ordering = ac.cmp(&bc);
-
-                        if cmp != Ordering::Equal {
-                            return cmp;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Extract a contiguous run of ASCII digits as a `u64`.
-    fn extract_number(chars: &mut Peekable<Chars<'_>>) -> u64 {
-        let mut n: u64 = 0;
-
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() {
-                n = n
-                    .saturating_mul(10)
-                    .saturating_add(u64::from(c as u32 - '0' as u32));
-                chars.next();
-            } else {
-                break;
-            }
-        }
-
-        n
     }
 }
 

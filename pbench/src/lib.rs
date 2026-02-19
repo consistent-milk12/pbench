@@ -12,6 +12,7 @@ pub(crate) mod cli;
 pub mod config;
 pub mod counter;
 pub mod entry;
+pub(crate) mod output;
 pub mod stats;
 pub mod time;
 pub(crate) mod util;

@@ -14,6 +14,7 @@
 use std::mem as StdMem;
 
 pub(crate) mod collection;
+pub(crate) use collection::CounterCollection;
 
 /// Classification of a counter for display formatting.
 ///

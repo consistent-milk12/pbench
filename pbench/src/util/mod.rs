@@ -4,6 +4,8 @@
 //! (type aliases in [`crate::entry`]), but they live in a `pub(crate)`
 //! module, making them unreachable from outside the crate.
 
+pub(crate) mod sort;
+
 /// Marker type for unconfigured `Bencher` inputs.
 ///
 /// Prevents users from accidentally passing `()` without calling
