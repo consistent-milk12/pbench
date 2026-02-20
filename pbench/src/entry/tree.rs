@@ -269,6 +269,7 @@ impl EntryTree {
 
     /// Children of this node (empty slice for leaves).
     #[must_use]
+    #[allow(dead_code, reason = "Useful accessor for tree traversal by consumers")]
     pub(crate) fn children(&self) -> &[Self] {
         match self {
             Self::Parent { children, .. } => children,
@@ -291,6 +292,10 @@ impl EntryTree {
 
     /// The group entry attached to this Parent, if any.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "Useful accessor for group inspection by consumers"
+    )]
     pub(crate) const fn group(&self) -> Option<&'static GroupEntry> {
         match self {
             Self::Parent { group, .. } => *group,

@@ -2,7 +2,7 @@
 
 use std::{fmt as StdFmt, ops as StdOps, time::Duration};
 
-use crate::time::Formatter;
+use crate::output::fmt::Fmt;
 
 /// [Picosecond](https://en.wikipedia.org/wiki/Picosecond)-precise [`Duration`].
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -173,7 +173,7 @@ impl StdFmt::Display for FineDuration {
 
         #[expect(clippy::cast_precision_loss)]
         let val: f64 = (((p * multiple) / scale.picos()) as f64) / multiple as f64;
-        let mut s: String = Formatter::format_f64(val, sig_figs);
+        let mut s: String = Fmt::format_f64(val, sig_figs);
 
         s.push(' ');
         s.push_str(scale.suffix());

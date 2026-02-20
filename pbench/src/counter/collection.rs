@@ -31,6 +31,7 @@ pub struct CounterCollection {
 
 impl CounterCollection {
     /// Create a new empty collection for the given counter kind.
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn new(kind: CounterKind) -> Self {
         Self {
@@ -68,6 +69,10 @@ impl CounterCollection {
     /// Number of samples recorded.
     #[inline]
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "Public API surface - required by len/is_empty pairing rule"
+    )]
     pub(crate) const fn len(&self) -> usize {
         self.counts.len()
     }
@@ -75,6 +80,10 @@ impl CounterCollection {
     /// Whether any samples have been recorded.
     #[inline]
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "Public API surface - required by len/is_empty pairing rule"
+    )]
     pub(crate) const fn is_empty(&self) -> bool {
         self.counts.is_empty()
     }
@@ -98,6 +107,7 @@ impl CounterCollection {
     }
 
     /// Return the raw per-iteration counts (one per sample).
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(crate) fn counts(&self) -> &[u64] {

@@ -2,8 +2,10 @@
 name = "pbench"
 version = "0.1.0"
 edition = "2024"
-description = "Percentile-focused benchmarking for Rust"
+description = "Percentile-focused benchmarking for Rust — p50/p95/p99/p99.9/p99.99"
 license = "MIT"
+keywords = ["benchmark", "percentile", "latency", "performance"]
+categories = ["development-tools::profiling"]
 
 [dependencies]
 pbench-macros = { path = "../pbench-macros" }
@@ -20,8 +22,10 @@ optional = true
 
 [dev-dependencies]
 trybuild = "1.0.116"
+tempfile = "3.25.0"
+scc = "3.6.4"
+masstree = "0.8.1"
 
 [features]
 default = []
 json = ["serde", "serde_json"]
-csv_output = []

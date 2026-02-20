@@ -123,6 +123,10 @@ impl HdrRecorder {
     /// Number of recorded values.
     #[inline]
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "Public API surface - required by len/is_empty pairing rule"
+    )]
     pub fn len(&self) -> u64 {
         self.histogram.len()
     }
@@ -130,6 +134,10 @@ impl HdrRecorder {
     /// Returns `true` if no values have been recorded.
     #[inline]
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "Public API surface - required by len/is_empty pairing rule"
+    )]
     pub fn is_empty(&self) -> bool {
         self.histogram.is_empty()
     }

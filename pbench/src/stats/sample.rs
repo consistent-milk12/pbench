@@ -13,6 +13,7 @@ pub struct RawSample {
     pub(crate) duration: FineDuration,
 
     /// Number of iters in this sample batch.
+    #[allow(dead_code, reason = "Stored for metadata; used in test-only methods")]
     pub(crate) sample_size: u32,
 }
 
@@ -25,6 +26,7 @@ pub struct SampleCollection {
 
 impl SampleCollection {
     /// Creates an empty collection.
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub const fn new() -> Self {
@@ -63,6 +65,7 @@ impl SampleCollection {
     }
 
     /// Returns picosecond durations sorted in ascending order.
+    #[cfg(test)]
     #[must_use]
     pub fn sorted_picos(&self) -> Vec<u128> {
         let mut picos: Vec<u128> = self
@@ -89,6 +92,7 @@ impl SampleCollection {
     }
 
     /// Returns the sum of all sample durations.
+    #[cfg(test)]
     #[must_use]
     pub fn total_duration(&self) -> FineDuration {
         let total: u128 = self
@@ -104,6 +108,7 @@ impl SampleCollection {
     ///
     /// Each sample may represent a different number of iterations,
     /// we just get a sum of them all.
+    #[cfg(test)]
     #[must_use]
     pub fn total_iterations(&self) -> u64 {
         self.samples

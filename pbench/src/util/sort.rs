@@ -8,7 +8,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 /// Natural string comparing utils that sorts numeric subsequences by value.
-pub(crate) struct NaturalCmp;
+pub struct NaturalCmp;
 
 impl NaturalCmp {
     pub(crate) fn compare(a: &str, b: &str) -> Ordering {

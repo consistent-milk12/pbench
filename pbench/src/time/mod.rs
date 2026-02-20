@@ -6,7 +6,6 @@
 pub(crate) mod fence;
 pub mod fine_duration;
 pub(crate) mod instant;
-pub mod utils;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub(crate) mod tsc;
@@ -17,7 +16,6 @@ use std::time::Instant;
 
 pub use fine_duration::FineDuration;
 pub use instant::InstantTimer;
-pub use utils::Formatter;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub use tsc::{TscTimer, TscUnavailable};
