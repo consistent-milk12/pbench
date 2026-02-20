@@ -1,6 +1,6 @@
 //! Benchmark example demonstrating throughput counters and sorting benchmarks.
 //!
-//! Run with: `cargo run -p pbench --example with_inputs`
+//! Run with: `cargo bench -p pbench --bench with_inputs`
 
 use pbench::{Bencher, ItemsCount};
 

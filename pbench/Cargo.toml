@@ -29,3 +29,19 @@ masstree = "0.8.1"
 [features]
 default = []
 json = ["serde", "serde_json"]
+
+[[bench]]
+name = "simple"
+harness = false
+
+[[bench]]
+name = "with_inputs"
+harness = false
+
+[[bench]]
+name = "bench_masstree"
+harness = false
+
+[[bench]]
+name = "bench_scc"
+harness = false

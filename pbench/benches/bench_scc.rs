@@ -1,35 +1,35 @@
-//! Benchmark example for the `masstree` crate (`MassTree`).
+//! Benchmark example for the `scc` crate (`TreeIndex`).
 //!
-//! Run with: `cargo run -p pbench --example bench_masstree`
+//! Run with: `cargo bench -p pbench --bench bench_scc`
 
-use masstree::MassTree;
 use pbench::{Bencher, ItemsCount};
+use scc::TreeIndex;
 
-/// Insert 1000 sequential keys into a fresh `MassTree`.
+/// Insert 1000 sequential keys into a fresh `TreeIndex`.
 #[pbench::bench]
 fn insert_1k(b: &Bencher<'_>) {
     let n: usize = 1000;
     b.counter(ItemsCount::new(n as u64));
 
     b.bench_values(|| {
-        let tree: MassTree<u64> = MassTree::new();
+        let tree: TreeIndex<u64, u64> = TreeIndex::new();
         for i in 0..n as u64 {
-            tree.insert(&i.to_be_bytes(), i);
+            let _ = tree.insert_sync(i, i);
         }
         tree
     });
 }
 
-/// Insert 10 000 sequential keys into a fresh `MassTree`.
+/// Insert 10 000 sequential keys into a fresh `TreeIndex`.
 #[pbench::bench]
 fn insert_10k(b: &Bencher<'_>) {
     let n: usize = 10_000;
     b.counter(ItemsCount::new(n as u64));
 
     b.bench_values(|| {
-        let tree: MassTree<u64> = MassTree::new();
+        let tree: TreeIndex<u64, u64> = TreeIndex::new();
         for i in 0..n as u64 {
-            tree.insert(&i.to_be_bytes(), i);
+            let _ = tree.insert_sync(i, i);
         }
         tree
     });
@@ -37,49 +37,43 @@ fn insert_10k(b: &Bencher<'_>) {
 
 /// Lookup an existing key in a pre-populated tree (1000 entries).
 #[pbench::bench]
-fn get_hit_1k(b: &Bencher<'_>) {
+fn peek_hit_1k(b: &Bencher<'_>) {
     let n: usize = 1000;
-    let tree: MassTree<u64> = MassTree::new();
+    let tree: TreeIndex<u64, u64> = TreeIndex::new();
     for i in 0..n as u64 {
-        tree.insert(&i.to_be_bytes(), i);
+        let _ = tree.insert_sync(i, i);
     }
 
-    let target: [u8; 8] = 500_u64.to_be_bytes();
-
     b.bench_refs(|| {
-        std::hint::black_box(tree.get(&target));
+        std::hint::black_box(tree.peek_with(&500, |_k: &u64, v: &u64| *v));
     });
 }
 
 /// Lookup a missing key in a pre-populated tree (1000 entries).
 #[pbench::bench]
-fn get_miss_1k(b: &Bencher<'_>) {
+fn peek_miss_1k(b: &Bencher<'_>) {
     let n: usize = 1000;
-    let tree: MassTree<u64> = MassTree::new();
+    let tree: TreeIndex<u64, u64> = TreeIndex::new();
     for i in 0..n as u64 {
-        tree.insert(&i.to_be_bytes(), i);
+        let _ = tree.insert_sync(i, i);
     }
 
-    let target: [u8; 8] = 9999_u64.to_be_bytes();
-
     b.bench_refs(|| {
-        std::hint::black_box(tree.get(&target));
+        std::hint::black_box(tree.peek_with(&9999, |_k: &u64, v: &u64| *v));
     });
 }
 
 /// Lookup an existing key in a larger tree (10 000 entries).
 #[pbench::bench]
-fn get_hit_10k(b: &Bencher<'_>) {
+fn peek_hit_10k(b: &Bencher<'_>) {
     let n: usize = 10_000;
-    let tree: MassTree<u64> = MassTree::new();
+    let tree: TreeIndex<u64, u64> = TreeIndex::new();
     for i in 0..n as u64 {
-        tree.insert(&i.to_be_bytes(), i);
+        let _ = tree.insert_sync(i, i);
     }
 
-    let target: [u8; 8] = 5000_u64.to_be_bytes();
-
     b.bench_refs(|| {
-        std::hint::black_box(tree.get(&target));
+        std::hint::black_box(tree.peek_with(&5000, |_k: &u64, v: &u64| *v));
     });
 }
 
@@ -90,12 +84,12 @@ fn remove_1k(b: &Bencher<'_>) {
     b.counter(ItemsCount::new(n as u64));
 
     b.bench_values(|| {
-        let tree: MassTree<u64> = MassTree::new();
+        let tree: TreeIndex<u64, u64> = TreeIndex::new();
         for i in 0..n as u64 {
-            tree.insert(&i.to_be_bytes(), i);
+            let _ = tree.insert_sync(i, i);
         }
         for i in 0..n as u64 {
-            let _ = tree.remove(&i.to_be_bytes());
+            tree.remove_sync(&i);
         }
         tree
     });

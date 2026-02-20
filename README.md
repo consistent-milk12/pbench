@@ -8,7 +8,7 @@ NOTE: Currently only supports single-threaded benches. Working on this for my [m
 
 ## Quick Start
 
-Check the examples/ in repo.
+Check the pbench/benches/ in repo.
 
 ```rust
 use pbench::Bencher;

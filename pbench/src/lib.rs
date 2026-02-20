@@ -30,7 +30,15 @@
 //! }
 //! ```
 //!
-//! Run with `cargo run --release`.
+//! Add to your `Cargo.toml`:
+//!
+//! ```toml
+//! [[bench]]
+//! name = "my_bench"
+//! harness = false
+//! ```
+//!
+//! Run with `cargo bench`.
 //!
 //! # Benchmark Patterns
 //!

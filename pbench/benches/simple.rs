@@ -1,7 +1,7 @@
 //! Simple benchmark example demonstrating basic pbench usage.
 //!
-//! Run with: `cargo run -p pbench --example simple`
-//! JSON output: `cargo run -p pbench --example simple -- --output json`
+//! Run with: `cargo bench -p pbench --bench simple`
+//! JSON output: `cargo bench -p pbench --bench simple -- --output json`
 
 use pbench::Bencher;
 
