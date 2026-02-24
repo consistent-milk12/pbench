@@ -5,11 +5,24 @@
 //! and filter/sort operations.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use super::meta::EntryMeta;
 use super::{AnyBenchEntry, GroupEntry};
 use crate::cli::SortBy;
+use crate::time::FineDuration;
 use crate::util::sort::NaturalCmp;
+
+/// Append a path component to `buf`, separating with `::` if non-empty.
+///
+/// Centralizes the separator rule for the save-extend-use-truncate
+/// buffer pattern used throughout tree traversal.
+pub(crate) fn push_path_component(buf: &mut String, name: &str) {
+    if !buf.is_empty() {
+        buf.push_str("::");
+    }
+    buf.push_str(name);
+}
 
 /// Hierarchical tree of benchmark entries organised by module path.
 ///
@@ -185,34 +198,37 @@ impl EntryTree {
     /// Leaves are retained if `filter(full_path)` returns `true`.
     /// Parents are retained only if they have remaining children.
     pub(crate) fn retain(tree: &mut Vec<Self>, mut filter: impl FnMut(&str) -> bool) {
-        // Inner recursive implementation with accumulated parent path.
+        // Inner recursive implementation with accumulated path buffer.
         fn retain_inner(
             tree: &mut Vec<EntryTree>,
-            parent_path: &str,
+            buf: &mut String,
             filter: &mut dyn FnMut(&str) -> bool,
         ) {
             tree.retain_mut(|subtree: &mut EntryTree| {
-                let subtree_path_owned: String;
-                let subtree_path: &str = if parent_path.is_empty() {
-                    subtree.raw_name()
-                } else {
-                    subtree_path_owned = format!("{parent_path}::{}", subtree.raw_name());
-                    &subtree_path_owned
-                };
+                let saved: usize = buf.len();
+                push_path_component(buf, subtree.raw_name());
 
-                match subtree {
+                let keep: bool = match subtree {
                     EntryTree::Parent { children, .. } => {
-                        retain_inner(children, subtree_path, filter);
+                        retain_inner(children, buf, filter);
 
                         !children.is_empty()
                     }
 
-                    EntryTree::Leaf { .. } => filter(subtree_path),
-                }
+                    EntryTree::Leaf { .. } => filter(buf),
+                };
+
+                debug_assert!(
+                    buf.len() >= saved,
+                    "buffer was modified beyond truncate point"
+                );
+                buf.truncate(saved);
+                keep
             });
         }
 
-        retain_inner(tree, "", &mut filter);
+        let mut buf: String = String::new();
+        retain_inner(tree, &mut buf, &mut filter);
     }
 
     // =====================================================================
@@ -235,8 +251,8 @@ impl EntryTree {
             match sort_by {
                 SortBy::Name => NaturalCmp::compare(a.raw_name(), b.raw_name()),
 
-                // Stats-based sorting (P50, P99, Mean) falls back to name
-                // order until the runner wires in actual timing data.
+                // Stats-based sorting deferred to sort_by_stats() which runs
+                // after benchmark collection. Pre-sort always uses name order.
                 SortBy::P50 | SortBy::P99 | SortBy::Mean => {
                     NaturalCmp::compare(a.raw_name(), b.raw_name())
                 }
@@ -247,6 +263,140 @@ impl EntryTree {
         for node in tree.iter_mut() {
             if let Self::Parent { children, .. } = node {
                 Self::sort(children, sort_by);
+            }
+        }
+    }
+
+    /// Sort entries by timing statistics from benchmark results.
+    ///
+    /// For `SortBy::Name`, delegates to [`sort`](Self::sort). For stats-based
+    /// variants (`P50`, `P99`, `Mean`), looks up each leaf's statistic in
+    /// `stats_map` (keyed by full path). Leaves with stats sort before those
+    /// without, ascending (fastest first). Ties break by name (natural order)
+    /// for deterministic output. Parents remain sorted by name.
+    ///
+    /// **Multi-thread policy:** When a benchmark runs with multiple thread
+    /// counts, the `stats_map` should contain the fastest (minimum) stat
+    /// across all thread counts for that benchmark name. This reflects
+    /// best-case performance for sorting purposes.
+    ///
+    /// Uses a decorate-sort-undecorate pattern: each element's sort key is
+    /// computed once (not per-comparison), avoiding `O(n log n)` allocations
+    /// and hash lookups in the comparator.
+    ///
+    /// Must be called after benchmarks have run and `stats_map` has been
+    /// populated from the collected `BenchRecord`s.
+    pub(crate) fn sort_by_stats(
+        tree: &mut [Self],
+        sort_by: SortBy,
+        stats_map: &HashMap<String, FineDuration>,
+        buf: &mut String,
+    ) {
+        if sort_by == SortBy::Name {
+            Self::sort(tree, sort_by);
+            return;
+        }
+
+        // Decorate: build sort key for each element once.
+        // Key: (kind, Option<picos>) — kind=0 for Leaf, 1 for Parent.
+        // Parents always sort after Leaves (kind ordering), then by name.
+        // Leaves sort by stat ascending, missing stats sort last.
+        let keys: Vec<(u8, Option<u128>)> = tree
+            .iter()
+            .map(|node: &Self| {
+                let kind: u8 = node.kind();
+
+                if kind == 1 {
+                    // Parent — no stat key, sorted by name below.
+                    return (kind, None);
+                }
+
+                let saved: usize = buf.len();
+                push_path_component(buf, node.raw_name());
+
+                let stat: Option<u128> =
+                    stats_map.get(buf.as_str()).map(|d: &FineDuration| d.picos);
+
+                debug_assert!(
+                    buf.len() >= saved,
+                    "buffer was modified beyond truncate point"
+                );
+                buf.truncate(saved);
+
+                (kind, stat)
+            })
+            .collect();
+
+        // Sort: use cached keys with name as tiebreaker.
+        let mut indices: Vec<usize> = (0..tree.len()).collect();
+        indices.sort_by(|&ai: &usize, &bi: &usize| {
+            let (a_kind, ref a_stat) = keys[ai];
+            let (b_kind, ref b_stat) = keys[bi];
+
+            // Leaves before Parents.
+            let kind_cmp: Ordering = a_kind.cmp(&b_kind);
+            if kind_cmp != Ordering::Equal {
+                return kind_cmp;
+            }
+
+            // Both Parents — sort by name.
+            if a_kind == 1 {
+                return NaturalCmp::compare(tree[ai].raw_name(), tree[bi].raw_name());
+            }
+
+            // Both Leaves — sort by stat, missing last, name tiebreak.
+            match (a_stat, b_stat) {
+                (Some(a_picos), Some(b_picos)) => a_picos
+                    .cmp(b_picos)
+                    .then_with(|| NaturalCmp::compare(tree[ai].raw_name(), tree[bi].raw_name())),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => NaturalCmp::compare(tree[ai].raw_name(), tree[bi].raw_name()),
+            }
+        });
+
+        // Undecorate: reorder tree in-place using the sorted indices.
+        // Apply permutation by cycling.
+        let mut placed: Vec<bool> = vec![false; tree.len()];
+        for start in 0..tree.len() {
+            if placed[start] || indices[start] == start {
+                placed[start] = true;
+                continue;
+            }
+
+            let mut current: usize = start;
+            loop {
+                let target: usize = indices[current];
+                indices[current] = current;
+                placed[current] = true;
+
+                if target == start {
+                    break;
+                }
+
+                tree.swap(current, target);
+                current = target;
+            }
+        }
+
+        drop(keys);
+
+        // Recursively sort children of Parent nodes.
+        for node in tree.iter_mut() {
+            if let Self::Parent {
+                raw_name, children, ..
+            } = node
+            {
+                let saved: usize = buf.len();
+                push_path_component(buf, raw_name);
+
+                Self::sort_by_stats(children, sort_by, stats_map, buf);
+
+                debug_assert!(
+                    buf.len() >= saved,
+                    "buffer was modified beyond truncate point"
+                );
+                buf.truncate(saved);
             }
         }
     }

@@ -203,3 +203,165 @@ fn natural_cmp_ordering() {
     let result: Ordering = NaturalCmp::compare("alpha", "beta");
     assert_eq!(result, Ordering::Less);
 }
+
+// --- sort_by_stats ---
+
+#[test]
+fn sort_by_stats_p50() {
+    use crate::time::FineDuration;
+    use std::collections::HashMap;
+
+    static BENCH_SLOW: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "slow_bench",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    static BENCH_FAST: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "fast_bench",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    static BENCH_MID: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "mid_bench",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    let entries: Vec<AnyBenchEntry> = vec![
+        AnyBenchEntry::Bench(&BENCH_SLOW),
+        AnyBenchEntry::Bench(&BENCH_FAST),
+        AnyBenchEntry::Bench(&BENCH_MID),
+    ];
+
+    let mut tree: Vec<EntryTree> = EntryTree::from_entries(&entries);
+
+    // Build stats map: fast < mid < slow.
+    let mut stats_map: HashMap<String, FineDuration> = HashMap::new();
+    stats_map.insert(
+        "mod_a::slow_bench".to_owned(),
+        FineDuration { picos: 3_000_000 },
+    );
+    stats_map.insert(
+        "mod_a::fast_bench".to_owned(),
+        FineDuration { picos: 1_000_000 },
+    );
+    stats_map.insert(
+        "mod_a::mid_bench".to_owned(),
+        FineDuration { picos: 2_000_000 },
+    );
+
+    EntryTree::sort_by_stats(&mut tree, SortBy::P50, &stats_map, &mut String::new());
+
+    // mod_a's children should be sorted: fast, mid, slow (ascending).
+    let mod_a: &EntryTree = &tree[0];
+    let children: &[EntryTree] = mod_a.children();
+    assert_eq!(children.len(), 3);
+    assert_eq!(children[0].raw_name(), "fast_bench");
+    assert_eq!(children[1].raw_name(), "mid_bench");
+    assert_eq!(children[2].raw_name(), "slow_bench");
+}
+
+#[test]
+fn sort_by_stats_missing_entries_sort_last() {
+    use crate::time::FineDuration;
+    use std::collections::HashMap;
+
+    static BENCH_A: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "bench_a",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    static BENCH_B: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "bench_b",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    let entries: Vec<AnyBenchEntry> = vec![
+        AnyBenchEntry::Bench(&BENCH_A),
+        AnyBenchEntry::Bench(&BENCH_B),
+    ];
+
+    let mut tree: Vec<EntryTree> = EntryTree::from_entries(&entries);
+
+    // Only bench_b has stats; bench_a does not.
+    let mut stats_map: HashMap<String, FineDuration> = HashMap::new();
+    stats_map.insert(
+        "mod_a::bench_b".to_owned(),
+        FineDuration { picos: 1_000_000 },
+    );
+
+    EntryTree::sort_by_stats(&mut tree, SortBy::P50, &stats_map, &mut String::new());
+
+    // bench_b (has stats) sorts before bench_a (no stats).
+    let mod_a: &EntryTree = &tree[0];
+    let children: &[EntryTree] = mod_a.children();
+    assert_eq!(children[0].raw_name(), "bench_b");
+    assert_eq!(children[1].raw_name(), "bench_a");
+}
+
+#[test]
+fn sort_by_stats_name_delegates_to_sort() {
+    use crate::time::FineDuration;
+    use std::collections::HashMap;
+
+    static BENCH_B: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "bench_b",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    static BENCH_A: BenchEntry = BenchEntry {
+        meta: EntryMeta {
+            raw_name: "bench_a",
+            module_path: "mod_a",
+            location: LOC,
+        },
+        bench_fn: TestHelper::dummy_bench,
+        options: None,
+    };
+
+    let entries: Vec<AnyBenchEntry> = vec![
+        AnyBenchEntry::Bench(&BENCH_B),
+        AnyBenchEntry::Bench(&BENCH_A),
+    ];
+
+    let mut tree: Vec<EntryTree> = EntryTree::from_entries(&entries);
+
+    let stats_map: HashMap<String, FineDuration> = HashMap::new();
+
+    EntryTree::sort_by_stats(&mut tree, SortBy::Name, &stats_map, &mut String::new());
+
+    // Name-based: bench_a before bench_b.
+    let mod_a: &EntryTree = &tree[0];
+    let children: &[EntryTree] = mod_a.children();
+    assert_eq!(children[0].raw_name(), "bench_a");
+    assert_eq!(children[1].raw_name(), "bench_b");
+}

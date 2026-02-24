@@ -1,5 +1,7 @@
 //! Unit tests for [`BenchOptions`] and [`ResolvedBenchOptions`].
 
+#![expect(clippy::cast_possible_truncation)]
+
 use std::time::Duration;
 
 use super::*;
@@ -16,6 +18,7 @@ fn defaults_all_none() {
     assert!(opts.max_time.is_none());
     assert!(opts.skip_ext_time.is_none());
     assert!(opts.ignore.is_none());
+    assert!(opts.threads.is_none());
 }
 
 // --- ResolvedBenchOptions::from_options ---
@@ -31,6 +34,7 @@ fn resolve_defaults() {
     assert_eq!(resolved.max_time, Duration::from_secs(5));
     assert!(!resolved.skip_ext_time);
     assert!(!resolved.ignore);
+    assert_eq!(resolved.threads, vec![1]);
 }
 
 // --- BenchOptions::overwrite ---
@@ -77,6 +81,7 @@ fn overwrite_all_fields_child_wins() {
         max_time: Some(Duration::from_secs(5)),
         skip_ext_time: Some(false),
         ignore: Some(false),
+        threads: Some(vec![1]),
     };
 
     let child: BenchOptions = BenchOptions {
@@ -86,6 +91,7 @@ fn overwrite_all_fields_child_wins() {
         max_time: Some(Duration::from_secs(10)),
         skip_ext_time: Some(true),
         ignore: Some(true),
+        threads: Some(vec![1, 2, 4]),
     };
 
     let merged: BenchOptions = child.overwrite(&parent);
@@ -96,6 +102,7 @@ fn overwrite_all_fields_child_wins() {
     assert_eq!(merged.max_time, Some(Duration::from_secs(10)));
     assert_eq!(merged.skip_ext_time, Some(true));
     assert_eq!(merged.ignore, Some(true));
+    assert_eq!(merged.threads, Some(vec![1, 2, 4]));
 }
 
 // --- ResolvedBenchOptions::from_options (partial) ---
@@ -115,4 +122,87 @@ fn resolve_partial() {
     assert_eq!(resolved.max_time, Duration::from_secs(5));
     assert!(!resolved.skip_ext_time);
     assert!(!resolved.ignore);
+    assert_eq!(resolved.threads, vec![1]);
+}
+
+// --- threads resolution ---
+
+#[test]
+fn resolve_threads_default_is_single() {
+    let resolved: ResolvedBenchOptions =
+        ResolvedBenchOptions::from_options(&BenchOptions::default());
+    assert_eq!(resolved.threads, vec![1]);
+}
+
+#[test]
+fn resolve_threads_explicit_list() {
+    let opts: BenchOptions = BenchOptions {
+        threads: Some(vec![1, 2, 4]),
+        ..BenchOptions::default()
+    };
+    let resolved: ResolvedBenchOptions = ResolvedBenchOptions::from_options(&opts);
+    assert_eq!(resolved.threads, vec![1, 2, 4]);
+}
+
+#[test]
+fn resolve_threads_sorted_and_deduped() {
+    let opts: BenchOptions = BenchOptions {
+        threads: Some(vec![4, 2, 4, 1, 2]),
+        ..BenchOptions::default()
+    };
+    let resolved: ResolvedBenchOptions = ResolvedBenchOptions::from_options(&opts);
+    assert_eq!(resolved.threads, vec![1, 2, 4]);
+}
+
+#[test]
+fn resolve_threads_zero_expands_to_available() {
+    let opts: BenchOptions = BenchOptions {
+        threads: Some(vec![0]),
+        ..BenchOptions::default()
+    };
+    let resolved: ResolvedBenchOptions = ResolvedBenchOptions::from_options(&opts);
+    let available: u32 =
+        std::thread::available_parallelism().map_or(1, |n: std::num::NonZeroUsize| n.get() as u32);
+    assert_eq!(resolved.threads, vec![available]);
+}
+
+#[test]
+fn resolve_threads_zero_mixed_with_explicit() {
+    let opts: BenchOptions = BenchOptions {
+        threads: Some(vec![1, 0]),
+        ..BenchOptions::default()
+    };
+    let resolved: ResolvedBenchOptions = ResolvedBenchOptions::from_options(&opts);
+    let available: u32 =
+        std::thread::available_parallelism().map_or(1, |n: std::num::NonZeroUsize| n.get() as u32);
+    // Result should be sorted and deduped: [1, available] or [available] if available==1
+    assert!(resolved.threads.contains(&1));
+    assert!(resolved.threads.contains(&available));
+}
+
+// --- threads overwrite ---
+
+#[test]
+fn overwrite_threads_child_wins() {
+    let parent: BenchOptions = BenchOptions {
+        threads: Some(vec![1]),
+        ..BenchOptions::default()
+    };
+    let child: BenchOptions = BenchOptions {
+        threads: Some(vec![1, 4, 8]),
+        ..BenchOptions::default()
+    };
+    let merged: BenchOptions = child.overwrite(&parent);
+    assert_eq!(merged.threads, Some(vec![1, 4, 8]));
+}
+
+#[test]
+fn overwrite_threads_inherits_from_parent() {
+    let parent: BenchOptions = BenchOptions {
+        threads: Some(vec![1, 2, 4]),
+        ..BenchOptions::default()
+    };
+    let child: BenchOptions = BenchOptions::default();
+    let merged: BenchOptions = child.overwrite(&parent);
+    assert_eq!(merged.threads, Some(vec![1, 2, 4]));
 }

@@ -1,6 +1,7 @@
 //! Unit tests for CLI argument parsing.
 
 use super::*;
+use std::time::Duration;
 
 // --- parse_defaults ---
 
@@ -22,6 +23,8 @@ fn parse_defaults() {
     assert_eq!(args.sort, SortBy::Name);
     assert_eq!(args.sample_count, None);
     assert_eq!(args.sample_size, None);
+    assert_eq!(args.threads, None);
+    assert_eq!(args.min_time, None);
 }
 
 // --- parse_filter ---
@@ -209,4 +212,122 @@ fn parse_unknown_flag() {
         "expected available flags listed, got: {}",
         err.message
     );
+}
+
+// --- parse_threads ---
+
+#[test]
+fn parse_threads_single() {
+    let args: CliArgs = CliArgs::parse_from(&["--threads", "1"]).unwrap();
+
+    assert_eq!(args.threads, Some(vec![1]));
+}
+
+#[test]
+fn parse_threads_multiple() {
+    let args: CliArgs = CliArgs::parse_from(&["--threads", "1,2,4,8"]).unwrap();
+
+    assert_eq!(args.threads, Some(vec![1, 2, 4, 8]));
+}
+
+#[test]
+fn parse_threads_zero() {
+    let args: CliArgs = CliArgs::parse_from(&["--threads", "0"]).unwrap();
+
+    assert_eq!(args.threads, Some(vec![0]));
+}
+
+#[test]
+fn parse_threads_zero_mixed() {
+    let args: CliArgs = CliArgs::parse_from(&["--threads", "0,1,4"]).unwrap();
+
+    assert_eq!(args.threads, Some(vec![0, 1, 4]));
+}
+
+#[test]
+fn parse_threads_invalid() {
+    let err: ParseError = CliArgs::parse_from(&["--threads", "abc"]).unwrap_err();
+
+    assert!(
+        err.message.contains("invalid thread count"),
+        "expected thread count error, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn parse_threads_no_flag() {
+    let args: CliArgs = CliArgs::parse_from(&["--filter", "bench"]).unwrap();
+
+    assert_eq!(args.threads, None);
+}
+
+// --- parse_min_time ---
+
+#[test]
+fn parse_min_time_milliseconds() {
+    let args: CliArgs = CliArgs::parse_from(&["--min-time", "500ms"]).unwrap();
+
+    assert_eq!(args.min_time, Some(Duration::from_millis(500)));
+}
+
+#[test]
+fn parse_min_time_seconds() {
+    let args: CliArgs = CliArgs::parse_from(&["--min-time", "2s"]).unwrap();
+
+    assert_eq!(args.min_time, Some(Duration::from_secs(2)));
+}
+
+#[test]
+fn parse_min_time_microseconds() {
+    let args: CliArgs = CliArgs::parse_from(&["--min-time", "1500us"]).unwrap();
+
+    assert_eq!(args.min_time, Some(Duration::from_micros(1500)));
+}
+
+#[test]
+fn parse_min_time_nanoseconds() {
+    let args: CliArgs = CliArgs::parse_from(&["--min-time", "100ns"]).unwrap();
+
+    assert_eq!(args.min_time, Some(Duration::from_nanos(100)));
+}
+
+#[test]
+fn parse_min_time_missing_unit() {
+    let err: ParseError = CliArgs::parse_from(&["--min-time", "500"]).unwrap_err();
+
+    assert!(
+        err.message.contains("missing unit"),
+        "expected missing unit error, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn parse_min_time_invalid_unit() {
+    let err: ParseError = CliArgs::parse_from(&["--min-time", "500xyz"]).unwrap_err();
+
+    assert!(
+        err.message.contains("unknown duration unit"),
+        "expected unknown unit error, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn parse_min_time_no_number() {
+    let err: ParseError = CliArgs::parse_from(&["--min-time", "ms"]).unwrap_err();
+
+    assert!(
+        err.message.contains("invalid duration"),
+        "expected invalid duration error, got: {}",
+        err.message
+    );
+}
+
+#[test]
+fn parse_min_time_default_none() {
+    let args: CliArgs = CliArgs::parse_from(&[]).unwrap();
+
+    assert_eq!(args.min_time, None);
 }

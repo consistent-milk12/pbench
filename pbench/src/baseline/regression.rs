@@ -10,7 +10,10 @@ mod unit_tests;
 
 /// Result of a regression check between two benchmark runs.
 #[derive(Clone, Debug)]
-#[allow(unused)]
+#[allow(
+    dead_code,
+    reason = "Fields consumed by compare_baseline text output and future table integration"
+)]
 #[expect(clippy::struct_excessive_bools)]
 pub(crate) struct RegressionResult {
     /// Whether any percentile exceeds the threshold.

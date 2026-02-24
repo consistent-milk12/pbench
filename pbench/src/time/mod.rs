@@ -45,6 +45,34 @@ pub enum Timestamp {
     Tsc(u64),
 }
 
+/// Compile-time timer abstraction for monomorphized measurement code.
+///
+/// Both [`InstantTimer`] and [`TscTimer`] implement this trait, enabling
+/// generic helper functions that are monomorphized per timer backend.
+/// This eliminates Os/Tsc code duplication in the bencher's sampling
+/// loop while preserving zero-cost dispatch (no vtable overhead).
+///
+/// This trait is sealed — external crates cannot implement it.
+pub(crate) trait TimerOps: Copy + Sync {
+    /// The timestamp type produced by [`now`](Self::now) and [`now_end`](Self::now_end).
+    type Stamp: Copy;
+
+    /// Take a start timestamp.
+    ///
+    /// For TSC this uses `RDTSC` with `LFENCE` serialization.
+    /// For the OS clock this calls [`Instant::now()`].
+    fn now(&self) -> Self::Stamp;
+
+    /// Take an end timestamp.
+    ///
+    /// For TSC this uses `RDTSCP` (self-serializing variant).
+    /// For the OS clock this is identical to [`now`](Self::now).
+    fn now_end(&self) -> Self::Stamp;
+
+    /// Compute elapsed time between a start and end timestamp.
+    fn elapsed(&self, start: Self::Stamp, end: Self::Stamp) -> FineDuration;
+}
+
 /// Measured overhead of the benchmarking harness.
 ///
 /// Used by the sampling loop to subtract per-iteration measurement

@@ -41,6 +41,10 @@ impl CounterCollection {
     }
 
     /// Create a new collection pre-allocated for `capacity` samples.
+    #[allow(
+        dead_code,
+        reason = "Will be used by per-sample counter collection path"
+    )]
     #[must_use]
     pub(crate) fn with_capacity(kind: CounterKind, capacity: usize) -> Self {
         Self {
@@ -49,12 +53,20 @@ impl CounterCollection {
         }
     }
 
+    /// Create a collection with `n` samples all having the same `count`.
+    #[must_use]
+    pub(crate) fn uniform(kind: CounterKind, count: u64, n: usize) -> Self {
+        Self {
+            kind,
+            counts: vec![count; n],
+        }
+    }
+
     /// Push a per-iteration count for one sample.
-    ///
-    /// The caller must divide the sample's total counter value by
-    /// `sample_size` before pushing, so that the stored value is
-    /// per-iteration — consistent with the per-iteration durations
-    /// in the stats pipeline.
+    #[allow(
+        dead_code,
+        reason = "Will be used by per-sample counter collection path"
+    )]
     pub(crate) fn push(&mut self, count: u64) {
         self.counts.push(count);
     }

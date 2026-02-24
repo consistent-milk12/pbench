@@ -5,6 +5,7 @@
 //! [`ResolvedBenchOptions`] is the fully resolved form with concrete values,
 //! produced by [`ResolvedBenchOptions::from_options`].
 
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 /// Partial benchmark configuration with `Option<T>` fields.
@@ -44,6 +45,13 @@ pub struct BenchOptions {
 
     /// Whether the benchmark should be ignored. `None` = inherit.
     pub ignore: Option<bool>,
+
+    /// Thread counts to run the benchmark with. `None` = inherit.
+    ///
+    /// Each benchmark is executed once per thread count in the list.
+    /// A value of `0` is expanded to [`std::thread::available_parallelism`]
+    /// at resolution time.
+    pub threads: Option<Vec<u32>>,
 }
 
 impl BenchOptions {
@@ -60,6 +68,7 @@ impl BenchOptions {
             max_time: self.max_time.or(other.max_time),
             skip_ext_time: self.skip_ext_time.or(other.skip_ext_time),
             ignore: self.ignore.or(other.ignore),
+            threads: self.threads.clone().or_else(|| other.threads.clone()),
         }
     }
 }
@@ -98,6 +107,12 @@ pub(crate) struct ResolvedBenchOptions {
 
     /// Whether the benchmark is ignored.
     pub ignore: bool,
+
+    /// Thread counts to run the benchmark with.
+    ///
+    /// Always non-empty. Sorted, deduplicated, with `0` expanded to the
+    /// available parallelism on the current machine.
+    pub threads: Vec<u32>,
 }
 
 impl ResolvedBenchOptions {
@@ -105,9 +120,12 @@ impl ResolvedBenchOptions {
     /// for any unset fields.
     ///
     /// `sample_size` remains `None` if unset, signalling adaptive tuning
-    /// to the sampling loop.
+    /// to the sampling loop. `threads` defaults to `[1]` if unset.
+    /// Any `0` entries are expanded to [`std::thread::available_parallelism`].
     #[must_use]
     pub fn from_options(options: &BenchOptions) -> Self {
+        let threads: Vec<u32> = Self::resolve_threads(options.threads.as_deref());
+
         Self {
             sample_count: options.sample_count.unwrap_or(DEFAULT_SAMPLE_COUNT),
             sample_size: options.sample_size,
@@ -115,7 +133,35 @@ impl ResolvedBenchOptions {
             max_time: options.max_time.unwrap_or(DEFAULT_MAX_TIME),
             skip_ext_time: options.skip_ext_time.unwrap_or(false),
             ignore: options.ignore.unwrap_or(false),
+            threads,
         }
+    }
+
+    /// Resolve a thread count slice into a sorted, deduplicated, non-empty
+    /// list. Expands `0` to available parallelism.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "Thread count capped at u32::MAX; no machine has more than 4 billion cores"
+    )]
+    fn resolve_threads(threads: Option<&[u32]>) -> Vec<u32> {
+        let available: u32 =
+            std::thread::available_parallelism().map_or(1, |n: NonZeroUsize| n.get() as u32);
+
+        let mut result: Vec<u32> = threads
+            .unwrap_or(&[1])
+            .iter()
+            .map(|&t: &u32| if t == 0 { available } else { t })
+            .collect();
+
+        result.sort_unstable();
+        result.dedup();
+
+        // Safety net: should never be empty, but guard anyway.
+        if result.is_empty() {
+            result.push(1);
+        }
+
+        result
     }
 }
 

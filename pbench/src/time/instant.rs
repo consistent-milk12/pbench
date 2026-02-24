@@ -3,7 +3,7 @@
 use std::time::Instant;
 use std::{cmp::Ordering, hint as StdHint};
 
-use crate::time::{FineDuration, fence::Fence};
+use crate::time::{FineDuration, TimerOps, fence::Fence};
 
 /// Timer backed by the OS monotonic clock.
 #[derive(Clone, Copy, Debug)]
@@ -14,6 +14,15 @@ impl InstantTimer {
     #[must_use]
     #[inline(always)]
     pub fn now(&self) -> Instant {
+        Instant::now()
+    }
+
+    /// Take an end timestamp.
+    ///
+    /// For the OS clock this is identical to [`now`](Self::now).
+    #[must_use]
+    #[inline(always)]
+    pub fn now_end(&self) -> Instant {
         Instant::now()
     }
 
@@ -83,5 +92,24 @@ impl InstantTimer {
 
             delay_len = delay_len.saturating_add(1);
         }
+    }
+}
+
+impl TimerOps for InstantTimer {
+    type Stamp = Instant;
+
+    #[inline(always)]
+    fn now(&self) -> Instant {
+        self.now()
+    }
+
+    #[inline(always)]
+    fn now_end(&self) -> Instant {
+        self.now_end()
+    }
+
+    #[inline(always)]
+    fn elapsed(&self, start: Instant, end: Instant) -> FineDuration {
+        self.elapsed(start, end)
     }
 }

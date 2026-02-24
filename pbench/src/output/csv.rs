@@ -10,8 +10,8 @@ use crate::stats::PercentileStats;
 
 /// CSV column header.
 ///
-/// Includes `iter_count` for completeness.
-const HEADER: &str = "name,sample_count,iter_count,min_picos,max_picos,mean_picos,std_dev_picos,p50_picos,p95_picos,p99_picos,p99_9_picos,p99_99_picos";
+/// Includes `threads` after `name` and `iter_count` for completeness.
+const HEADER: &str = "name,threads,sample_count,iter_count,min_picos,max_picos,mean_picos,std_dev_picos,p50_picos,p95_picos,p99_picos,p99_9_picos,p99_99_picos";
 
 /// CSV output renderer.
 ///
@@ -22,20 +22,22 @@ pub struct CsvRenderer;
 impl CsvRenderer {
     /// Render benchmark results as a CSV string.
     ///
+    /// Each result tuple contains `(name, thread_count, stats)`.
     /// The output starts with a header row followed by one row per benchmark.
     /// Duration fields are raw picosecond `u128` values.
     #[must_use]
-    pub(crate) fn render(results: &[(&str, &PercentileStats)]) -> String {
+    pub(crate) fn render(results: &[(&str, u32, &PercentileStats)]) -> String {
         let mut out: String = String::with_capacity(HEADER.len() + results.len() * 128);
 
         out.push_str(HEADER);
         out.push('\n');
 
-        for &(name, stats) in results {
+        for &(name, thread_count, stats) in results {
             let _: std::fmt::Result = writeln!(
                 out,
-                "{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 name,
+                thread_count,
                 stats.sample_count,
                 stats.iter_count,
                 stats.min.picos,

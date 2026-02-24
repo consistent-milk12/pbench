@@ -4,18 +4,18 @@
 //! [`EntryTree`], applies CLI filters and sort order, then dispatches to
 //! the appropriate action: list, test, or full bench with output rendering.
 
+use std::collections::HashMap;
 use std::io::{self as StdIo, Write};
 use std::panic as StdPanic;
 use std::thread as StdThread;
 
 use crate::bencher::{BenchContext, Bencher};
-use crate::cli::{BytesFormat, CliArgs, OutputFormat};
+use crate::cli::{CliArgs, OutputFormat, SortBy};
 use crate::config::{BenchOptions, ResolvedBenchOptions};
-use crate::counter::CounterCollection;
+use crate::entry::tree::push_path_component;
 use crate::entry::{AnyBenchEntry, BENCH_ENTRIES, EntryTree, GroupEntry};
 use crate::output::csv::CsvRenderer;
-use crate::output::fmt::DisplayThroughput;
-use crate::output::table::{TableColumn, TablePainter};
+use crate::output::render::{BenchRecord, TableRenderer};
 use crate::stats::PercentileStats;
 use crate::time::{FineDuration, Timer};
 
@@ -33,18 +33,6 @@ pub enum RunAction {
 
     /// Full benchmark execution with timing and output.
     Bench,
-}
-
-/// Collected result for a single benchmark.
-struct BenchRecord {
-    /// Fully qualified benchmark name.
-    name: String,
-
-    /// Timing statistics.
-    stats: PercentileStats,
-
-    /// Optional counter data for throughput display.
-    counter: Option<CounterCollection>,
 }
 
 /// Benchmark runner.
@@ -78,7 +66,7 @@ impl Runner {
 
     /// Override sample count (builder API for programmatic config).
     #[must_use]
-    #[expect(dead_code, reason = "Programmatic builder API for library consumers")]
+    #[allow(dead_code, reason = "Programmatic builder API for library consumers")]
     pub(crate) const fn sample_count(mut self, n: u32) -> Self {
         self.args.sample_count = Some(n);
 
@@ -87,13 +75,10 @@ impl Runner {
 
     /// Override minimum benchmarking time (builder API).
     #[must_use]
-    #[expect(dead_code, reason = "Programmatic builder API for library consumers")]
+    #[allow(dead_code, reason = "Programmatic builder API for library consumers")]
     pub(crate) const fn min_time(mut self, d: std::time::Duration) -> Self {
         self.args.sample_size = None; // adaptive when min_time overridden
-        // Store as a CLI overridem, will be applied during option resolution.
-        // For now, min_time override is handled through sample_count/sample_size.
-        // Full Duration-based override requires extending CliArgs (deferred).
-        let _ = d;
+        self.args.min_time = Some(d);
 
         self
     }
@@ -126,7 +111,7 @@ impl Runner {
             RunAction::List => self.action_list(&tree),
             RunAction::ListTerse => self.action_list_terse(&tree),
             RunAction::Test => self.action_test(&tree),
-            RunAction::Bench => self.action_bench(&tree),
+            RunAction::Bench => self.action_bench(&mut tree),
         }
     }
 
@@ -236,8 +221,9 @@ impl Runner {
     fn action_list_terse(&self, tree: &[EntryTree]) {
         let stdout: StdIo::Stdout = StdIo::stdout();
         let mut out: StdIo::BufWriter<StdIo::Stdout> = StdIo::BufWriter::new(stdout);
+        let mut buf: String = String::new();
 
-        Self::collect_names(tree, "", &mut |name: &str| {
+        Self::collect_names(tree, &mut buf, &mut |name: &str| {
             writeln!(out, "{name}").expect("write");
         });
 
@@ -245,30 +231,37 @@ impl Runner {
     }
 
     /// Collect fully qualified benchmark names by traversing the tree.
-    fn collect_names(nodes: &[EntryTree], parent_path: &str, emit: &mut dyn FnMut(&str)) {
+    fn collect_names(nodes: &[EntryTree], buf: &mut String, emit: &mut dyn FnMut(&str)) {
         for node in nodes {
             match node {
                 EntryTree::Parent {
                     raw_name, children, ..
                 } => {
-                    let path: String = if parent_path.is_empty() {
-                        (*raw_name).to_owned()
-                    } else {
-                        format!("{parent_path}::{raw_name}")
-                    };
+                    let saved: usize = buf.len();
+                    push_path_component(buf, raw_name);
 
-                    Self::collect_names(children, &path, emit);
+                    Self::collect_names(children, buf, emit);
+
+                    debug_assert!(
+                        buf.len() >= saved,
+                        "buffer was modified beyond truncate point"
+                    );
+
+                    buf.truncate(saved);
                 }
 
                 EntryTree::Leaf { entry } => {
-                    let name: &str = entry.raw_name();
-                    let full_name: String = if parent_path.is_empty() {
-                        name.to_owned()
-                    } else {
-                        format!("{parent_path}::{name}")
-                    };
+                    let saved: usize = buf.len();
+                    push_path_component(buf, entry.raw_name());
 
-                    emit(&full_name);
+                    emit(buf);
+
+                    debug_assert!(
+                        buf.len() >= saved,
+                        "buffer was modified beyond truncate point"
+                    );
+
+                    buf.truncate(saved);
                 }
             }
         }
@@ -290,8 +283,9 @@ impl Runner {
     fn action_test(&self, tree: &[EntryTree]) {
         let mut pass_count: u32 = 0;
         let mut fail_count: u32 = 0;
+        let mut buf: String = String::new();
 
-        Self::visit_entries(tree, "", &mut |name: &str, entry: &AnyBenchEntry| {
+        Self::visit_entries(tree, &mut buf, &mut |name: &str, entry: &AnyBenchEntry| {
             eprint!("test {name} ... ");
 
             let result: StdThread::Result<()> =
@@ -303,7 +297,7 @@ impl Runner {
                         ..BenchOptions::default()
                     };
                     let resolved: ResolvedBenchOptions = ResolvedBenchOptions::from_options(&opts);
-                    let ctx: BenchContext = BenchContext::new(resolved);
+                    let ctx: BenchContext = BenchContext::new(resolved, 1);
                     let bencher: Bencher<'_> = Bencher::new(&ctx);
 
                     match entry {
@@ -348,7 +342,7 @@ impl Runner {
     /// # Panics
     ///
     /// Panics if output writing fails.
-    fn action_bench(&self, tree: &[EntryTree]) {
+    fn action_bench(&self, tree: &mut [EntryTree]) {
         let timer: Timer = Timer::best_available();
 
         // Report timer info to stderr.
@@ -358,26 +352,65 @@ impl Runner {
             timer.precision()
         );
 
-        // Collect results.
+        // Detect whether any entry uses multi-thread dispatch.
+        // We check by collecting results first, then validating output.
         let mut records: Vec<BenchRecord> = Vec::new();
+        let mut buf: String = String::new();
 
-        Self::run_bench_tree(tree, "", None, &self.args, &mut records);
+        Self::run_bench_tree(tree, &mut buf, None, &self.args, &mut records);
 
         if records.is_empty() {
             eprintln!("pbench: no benchmarks were executed");
             return;
         }
 
+        // Post-collection sort for stats-based ordering.
+        if matches!(self.args.sort, SortBy::P50 | SortBy::P99 | SortBy::Mean) {
+            // Build stats map: for benchmarks run with multiple thread counts
+            // (--threads 1,2,4), the map keeps the fastest (minimum) stat per
+            // benchmark name so sorting reflects best-case performance.
+            let mut stats_map: HashMap<String, FineDuration> = HashMap::new();
+
+            for r in &records {
+                let stat: FineDuration = match self.args.sort {
+                    SortBy::P50 => r.stats.percentiles.p50,
+
+                    SortBy::P99 => r.stats.percentiles.p99,
+
+                    SortBy::Mean => r.stats.mean,
+
+                    SortBy::Name => unreachable!(),
+                };
+
+                stats_map
+                    .entry(r.name.clone())
+                    .and_modify(|existing: &mut FineDuration| {
+                        if stat.picos < existing.picos {
+                            *existing = stat;
+                        }
+                    })
+                    .or_insert(stat);
+            }
+
+            EntryTree::sort_by_stats(tree, self.args.sort, &stats_map, &mut buf);
+        }
+
         // Build output slices.
-        let result_pairs: Vec<(&str, &PercentileStats)> = records
+        let result_pairs: Vec<(&str, u32, &PercentileStats)> = records
             .iter()
-            .map(|r: &BenchRecord| (r.name.as_str(), &r.stats))
+            .map(|r: &BenchRecord| (r.name.as_str(), r.thread_count, &r.stats))
             .collect();
 
         // Render output.
         match self.args.output_format {
             OutputFormat::Table => {
-                Self::render_table(tree, &records, self.args.bytes_format);
+                TableRenderer::render(
+                    tree,
+                    &records,
+                    self.args.bytes_format,
+                    None,
+                    self.args.threshold,
+                );
             }
 
             OutputFormat::Json => {
@@ -449,7 +482,7 @@ impl Runner {
     /// group attached.
     fn run_bench_tree(
         nodes: &[EntryTree],
-        parent_path: &str,
+        buf: &mut String,
         group: Option<&'static GroupEntry>,
         args: &CliArgs,
         records: &mut Vec<BenchRecord>,
@@ -462,20 +495,24 @@ impl Runner {
                     group: node_group,
                     ..
                 } => {
-                    let path: String = if parent_path.is_empty() {
-                        (*raw_name).to_owned()
-                    } else {
-                        format!("{parent_path}::{raw_name}")
-                    };
+                    let saved: usize = buf.len();
+                    push_path_component(buf, raw_name);
 
                     // Prefer this node's group; fall back to inherited group.
                     let active_group: Option<&'static GroupEntry> = node_group.or(group);
 
-                    Self::run_bench_tree(children, &path, active_group, args, records);
+                    Self::run_bench_tree(children, buf, active_group, args, records);
+
+                    debug_assert!(
+                        buf.len() >= saved,
+                        "buffer was modified beyond truncate point"
+                    );
+
+                    buf.truncate(saved);
                 }
 
                 EntryTree::Leaf { entry } => {
-                    Self::run_single_entry(entry, parent_path, group, args, records);
+                    Self::run_single_entry(entry, buf, group, args, records);
                 }
             }
         }
@@ -484,24 +521,29 @@ impl Runner {
     /// Run a single benchmark entry and collect its result.
     fn run_single_entry(
         entry: &AnyBenchEntry,
-        parent_path: &str,
+        buf: &mut String,
         group: Option<&'static GroupEntry>,
         args: &CliArgs,
         records: &mut Vec<BenchRecord>,
     ) {
         match entry {
-            AnyBenchEntry::Bench(be) => {
-                let full_name: String = if parent_path.is_empty() {
-                    be.meta.raw_name.to_owned()
-                } else {
-                    format!("{parent_path}::{}", be.meta.raw_name)
-                };
+            AnyBenchEntry::Bench(bentry) => {
+                let saved: usize = buf.len();
+                push_path_component(buf, bentry.meta.raw_name);
 
-                // Resolve options: CLI -> entry -> group (CLI wins).
+                let full_name: String = buf.to_owned();
+
+                debug_assert!(
+                    buf.len() >= saved,
+                    "buffer was modified beyond truncate point"
+                );
+                buf.truncate(saved);
+
+                // resolve options
                 let entry_opts: BenchOptions =
-                    be.options.map_or_else(BenchOptions::default, |f| f());
+                    bentry.options.map_or_else(BenchOptions::default, |f| f());
                 let group_opts: BenchOptions = group
-                    .and_then(|g: &GroupEntry| g.options)
+                    .and_then(|group: &GroupEntry| group.options)
                     .map_or_else(BenchOptions::default, |f| f());
                 let cli_opts: BenchOptions = Self::cli_to_bench_options(args);
                 let merged: BenchOptions = cli_opts.overwrite(&entry_opts.overwrite(&group_opts));
@@ -511,41 +553,78 @@ impl Runner {
                     return;
                 }
 
-                let ctx: BenchContext = BenchContext::new(resolved);
-                let bencher: Bencher<'_> = Bencher::new(&ctx);
-                (be.bench_fn)(&bencher);
+                for &tc in &resolved.threads {
+                    let ctx: BenchContext = BenchContext::new(resolved.clone(), tc);
+                    let bencher: Bencher<'_> = Bencher::new(&ctx);
+                    (bentry.bench_fn)(&bencher);
 
-                if let Some(result) = ctx.finish() {
-                    records.push(BenchRecord {
-                        name: full_name,
-                        stats: result.stats,
-                        counter: result.counter,
-                    });
+                    if let Some(result) = ctx.finish() {
+                        let warnings: Vec<String> = PercentileStats::check_sample_sufficiency(
+                            result.stats.sample_count,
+                            resolved.sample_count,
+                        );
+                        for w in &warnings {
+                            eprintln!("pbench: warning: {full_name}: {w}");
+                        }
+
+                        records.push(BenchRecord {
+                            name: full_name.clone(),
+                            thread_count: tc,
+                            stats: result.stats,
+                            counter: result.counter,
+                        });
+                    }
                 }
             }
 
             AnyBenchEntry::Generic(ge) => {
+                // Resolve options
+                let group_opts: BenchOptions = group
+                    .and_then(|g: &GroupEntry| g.options)
+                    .map_or_else(BenchOptions::default, |f| f());
+                let cli_opts: BenchOptions = Self::cli_to_bench_options(args);
+                let merged: BenchOptions = cli_opts.overwrite(&group_opts);
+                let resolved: ResolvedBenchOptions = ResolvedBenchOptions::from_options(&merged);
+
+                if !args.run_ignored.should_run(resolved.ignore) {
+                    return;
+                }
+
                 for &arg in ge.args {
-                    let full_name: String = if parent_path.is_empty() {
-                        format!("{}::{arg}", ge.meta.raw_name)
-                    } else {
-                        format!("{parent_path}::{}::{arg}", ge.meta.raw_name)
-                    };
+                    let saved: usize = buf.len();
+                    push_path_component(buf, ge.meta.raw_name);
+                    buf.push_str("::");
+                    buf.push_str(arg);
 
-                    let cli_opts: BenchOptions = Self::cli_to_bench_options(args);
-                    let resolved: ResolvedBenchOptions =
-                        ResolvedBenchOptions::from_options(&cli_opts);
+                    let full_name: String = buf.to_owned();
 
-                    let ctx: BenchContext = BenchContext::new(resolved);
-                    let bencher: Bencher<'_> = Bencher::new(&ctx);
-                    (ge.bench_fn)(&bencher, arg);
+                    debug_assert!(
+                        buf.len() >= saved,
+                        "buffer was modified beyond truncate point"
+                    );
+                    buf.truncate(saved);
 
-                    if let Some(result) = ctx.finish() {
-                        records.push(BenchRecord {
-                            name: full_name,
-                            stats: result.stats,
-                            counter: result.counter,
-                        });
+                    for &tc in &resolved.threads {
+                        let ctx: BenchContext = BenchContext::new(resolved.clone(), tc);
+                        let bencher: Bencher<'_> = Bencher::new(&ctx);
+                        (ge.bench_fn)(&bencher, arg);
+
+                        if let Some(result) = ctx.finish() {
+                            let warnings: Vec<String> = PercentileStats::check_sample_sufficiency(
+                                result.stats.sample_count,
+                                resolved.sample_count,
+                            );
+                            for w in &warnings {
+                                eprintln!("pbench: warning: {full_name}: {w}");
+                            }
+
+                            records.push(BenchRecord {
+                                name: full_name.clone(),
+                                thread_count: tc,
+                                stats: result.stats,
+                                counter: result.counter,
+                            });
+                        }
                     }
                 }
             }
@@ -557,155 +636,22 @@ impl Runner {
     }
 
     // =====================================================================
-    //  Table rendering
-    // =====================================================================
-
-    /// Render results as a terminal table.
-    ///
-    /// # Panics
-    ///
-    /// Panics if writing to stdout fails.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "Picos-to-f64 conversion is fine for throughput width measurement"
-    )]
-    fn render_table(tree: &[EntryTree], records: &[BenchRecord], bytes_format: BytesFormat) {
-        // Pre-compute column widths by scanning all results.
-        let mut column_widths: [usize; TableColumn::COUNT] =
-            TableColumn::ALL.map(|col: TableColumn| col.name().len());
-
-        let mut max_name_span: usize = 0;
-
-        // Walk tree to compute max name span (name + prefix chars).
-        Self::compute_name_spans(tree, 0, &mut max_name_span);
-
-        // Compute column widths from timing and throughput results.
-        for record in records {
-            for (i, col) in TableColumn::ALL.iter().enumerate() {
-                // Timing width.
-                let dur: FineDuration = col.get_stat(&record.stats);
-                let width: usize = dur.to_string().len();
-
-                if width > column_widths[i] {
-                    column_widths[i] = width;
-                }
-
-                // Throughput width (if counter attached).
-                if let Some(ref collection) = record.counter
-                    && let Some(mean_count) = collection.mean_count()
-                {
-                    let picos: f64 = col.get_stat(&record.stats).picos as f64;
-                    let dt: DisplayThroughput = DisplayThroughput {
-                        kind: collection.kind(),
-                        count: mean_count,
-                        picos,
-                        bytes_format,
-                    };
-
-                    let tp_width: usize = dt.to_string().len();
-
-                    if tp_width > column_widths[i] {
-                        column_widths[i] = tp_width;
-                    }
-                }
-            }
-        }
-
-        let stdout: StdIo::Stdout = StdIo::stdout();
-        let out: StdIo::BufWriter<StdIo::Stdout> = StdIo::BufWriter::new(stdout);
-        let mut painter: TablePainter<StdIo::BufWriter<StdIo::Stdout>> =
-            TablePainter::new(out, max_name_span, column_widths);
-
-        Self::paint_tree(&mut painter, tree, "", records, bytes_format).expect("write table");
-    }
-
-    /// Compute maximum name span including tree prefix characters.
-    fn compute_name_spans(nodes: &[EntryTree], depth: usize, max_span: &mut usize) {
-        for node in nodes {
-            let name_len: usize = node.raw_name().len();
-            // Tree prefix adds 3 chars per nesting level ("├─ " or "╰─ ").
-            let span: usize = depth * 3 + name_len;
-
-            if span > *max_span {
-                *max_span = span;
-            }
-
-            if let EntryTree::Parent { children, .. } = node {
-                Self::compute_name_spans(children, depth + 1, max_span);
-            }
-        }
-    }
-
-    /// Paint the tree using `TablePainter`, matching records to leaves by
-    /// fully qualified name.
-    fn paint_tree<W: Write>(
-        painter: &mut TablePainter<W>,
-        nodes: &[EntryTree],
-        parent_path: &str,
-        records: &[BenchRecord],
-        bytes_format: BytesFormat,
-    ) -> StdIo::Result<()> {
-        for (i, node) in nodes.iter().enumerate() {
-            let is_last: bool = i == nodes.len() - 1;
-
-            match node {
-                EntryTree::Parent {
-                    raw_name, children, ..
-                } => {
-                    let path: String = if parent_path.is_empty() {
-                        (*raw_name).to_owned()
-                    } else {
-                        format!("{parent_path}::{raw_name}")
-                    };
-
-                    painter.start_parent(raw_name, is_last)?;
-                    Self::paint_tree(painter, children, &path, records, bytes_format)?;
-                    painter.finish_parent()?;
-                }
-
-                EntryTree::Leaf { entry } => {
-                    let name: &str = entry.raw_name();
-                    let full_name: String = if parent_path.is_empty() {
-                        name.to_owned()
-                    } else {
-                        format!("{parent_path}::{name}")
-                    };
-
-                    // Find matching record by full name.
-                    let record: Option<&BenchRecord> =
-                        records.iter().find(|r: &&BenchRecord| r.name == full_name);
-
-                    if let Some(rec) = record {
-                        let counter_arg: Option<(&CounterCollection, BytesFormat)> = rec
-                            .counter
-                            .as_ref()
-                            .map(|c: &CounterCollection| (c, bytes_format));
-
-                        painter.write_leaf(name, &rec.stats, counter_arg, is_last)?;
-                    } else {
-                        painter.write_ignored_leaf(name, is_last)?;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    // =====================================================================
     //  Baseline comparison
     // =====================================================================
 
     /// Compare current results against a saved baseline.
+    ///
+    /// Matches entries by `(name, thread_count)` pair. Entries in the current
+    /// run that have no baseline match are reported as "new".
     #[cfg(feature = "json")]
     fn compare_baseline(
         baseline_name: &str,
-        current: &[(&str, &PercentileStats)],
+        current: &[(&str, u32, &PercentileStats)],
         threshold_pct: f64,
     ) {
         use std::path::PathBuf;
 
-        use crate::baseline::{BaselineEntry, BaselineStore};
+        use crate::baseline::{BaselineEntry, BaselineStore, RegressionChecker, RegressionResult};
 
         let dir: PathBuf = PathBuf::from("target/pbench/baselines");
 
@@ -723,16 +669,12 @@ impl Runner {
 
         let mut regression_count: u32 = 0;
 
-        for &(name, new_stats) in current {
-            use crate::baseline::BaselineEntry;
-
+        for &(name, thread_count, new_stats) in current {
             let baseline_match: Option<&BaselineEntry> = baseline_entries
                 .iter()
-                .find(|e: &&BaselineEntry| e.name == name);
+                .find(|e: &&BaselineEntry| e.name == name && e.thread_count == thread_count);
 
             if let Some(old_entry) = baseline_match {
-                use crate::baseline::{RegressionChecker, RegressionResult};
-
                 let old_stats: PercentileStats = old_entry.stats.to_percentile_stats();
                 let result: RegressionResult =
                     RegressionChecker::check(&old_stats, new_stats, threshold_pct);
@@ -740,17 +682,17 @@ impl Runner {
                 if result.is_regression {
                     regression_count += 1;
                     eprintln!(
-                        "  REGRESSION {name}: p50={:+.1}% p99={:+.1}% mean={:+.1}%",
+                        "  REGRESSION {name} (t={thread_count}): p50={:+.1}% p99={:+.1}% mean={:+.1}%",
                         result.p50_delta_pct, result.p99_delta_pct, result.mean_delta_pct
                     );
                 } else {
                     eprintln!(
-                        "  ok {name}: p50={:+.1}% p99={:+.1}%",
+                        "  ok {name} (t={thread_count}): p50={:+.1}% p99={:+.1}%",
                         result.p50_delta_pct, result.p99_delta_pct
                     );
                 }
             } else {
-                eprintln!("  new {name} (no baseline)");
+                eprintln!("  new {name} (t={thread_count}, no baseline)");
             }
         }
 
@@ -771,6 +713,8 @@ impl Runner {
         BenchOptions {
             sample_count: args.sample_count,
             sample_size: args.sample_size,
+            min_time: args.min_time,
+            threads: args.threads.clone(),
             ..BenchOptions::default()
         }
     }
@@ -778,7 +722,7 @@ impl Runner {
     /// Visit all leaf entries in the tree with their fully qualified names.
     fn visit_entries(
         nodes: &[EntryTree],
-        parent_path: &str,
+        buf: &mut String,
         visitor: &mut dyn FnMut(&str, &AnyBenchEntry),
     ) {
         for node in nodes {
@@ -786,24 +730,31 @@ impl Runner {
                 EntryTree::Parent {
                     raw_name, children, ..
                 } => {
-                    let path: String = if parent_path.is_empty() {
-                        (*raw_name).to_owned()
-                    } else {
-                        format!("{parent_path}::{raw_name}")
-                    };
+                    let saved: usize = buf.len();
+                    push_path_component(buf, raw_name);
 
-                    Self::visit_entries(children, &path, visitor);
+                    Self::visit_entries(children, buf, visitor);
+
+                    debug_assert!(
+                        buf.len() >= saved,
+                        "buffer was modified beyond truncate point"
+                    );
+
+                    buf.truncate(saved);
                 }
 
                 EntryTree::Leaf { entry } => {
-                    let name: &str = entry.raw_name();
-                    let full_name: String = if parent_path.is_empty() {
-                        name.to_owned()
-                    } else {
-                        format!("{parent_path}::{name}")
-                    };
+                    let saved: usize = buf.len();
+                    push_path_component(buf, entry.raw_name());
 
-                    visitor(&full_name, entry);
+                    visitor(buf, entry);
+
+                    debug_assert!(
+                        buf.len() >= saved,
+                        "buffer was modified beyond truncate point"
+                    );
+
+                    buf.truncate(saved);
                 }
             }
         }

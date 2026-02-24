@@ -152,25 +152,40 @@ impl PercentileStats {
     /// significance. The rule is: a percentile at level `p` needs at least
     /// `1 / (1 - p)` samples (e.g., p99.99 needs ≥10,000 samples).
     ///
+    /// When `actual_count < requested_count`, the message indicates that
+    /// `max_time` cut collection short. Otherwise, it suggests increasing
+    /// `sample_count`.
+    ///
     /// Returns an empty [`Vec`] if all percentiles have sufficient samples.
     #[must_use]
-    pub fn check_sample_sufficiency(sample_count: u32) -> Vec<&'static str> {
-        let mut warnings: Vec<&'static str> = Vec::new();
+    pub fn check_sample_sufficiency(actual_count: u32, requested_count: u32) -> Vec<String> {
+        const THRESHOLDS: [(u32, &str); 4] = [
+            (20, "p95"),
+            (100, "p99"),
+            (1_000, "p99.9"),
+            (10_000, "p99.99"),
+        ];
 
-        if sample_count < 20 {
-            warnings.push("p95 needs at least 20 samples for statistical significance");
-        }
+        let mut warnings: Vec<String> = Vec::new();
 
-        if sample_count < 100 {
-            warnings.push("p99 needs at least 100 samples for statistical significance");
-        }
+        for &(min_samples, label) in &THRESHOLDS {
+            if actual_count >= min_samples {
+                continue;
+            }
 
-        if sample_count < 1_000 {
-            warnings.push("p99.9 needs at least 1,000 samples for statistical significance");
-        }
+            let msg: String = if actual_count < requested_count {
+                format!(
+                    "{label} needs at least {min_samples} samples but only {actual_count} \
+                     were collected before max_time; increase max_time or reduce sample_count"
+                )
+            } else {
+                format!(
+                    "{label} needs at least {min_samples} samples for statistical \
+                     significance; increase sample_count"
+                )
+            };
 
-        if sample_count < 10_000 {
-            warnings.push("p99.99 needs at least 10,000 samples for statistical significance");
+            warnings.push(msg);
         }
 
         warnings

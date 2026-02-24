@@ -108,26 +108,41 @@ fn compute_stats_zero_sample_size_panics() {
 // --- check_sample_sufficiency ---
 
 #[test]
-fn sample_sufficiency_warnings() {
-    // 100 samples: p95 and p99 are fine, p99.9 and p99.99 warn
-    let warnings: Vec<&str> = PercentileStats::check_sample_sufficiency(100);
+fn sample_sufficiency_config_too_low() {
+    // Requested 100, got 100 — config issue, not max_time
+    let warnings: Vec<String> = PercentileStats::check_sample_sufficiency(100, 100);
 
     assert_eq!(warnings.len(), 2);
     assert!(warnings[0].contains("p99.9"));
+    assert!(warnings[0].contains("increase sample_count"));
     assert!(warnings[1].contains("p99.99"));
+    assert!(warnings[1].contains("increase sample_count"));
+}
+
+#[test]
+fn sample_sufficiency_max_time_truncated() {
+    // Requested 10_000, but only got 100 — max_time cut it short
+    let warnings: Vec<String> = PercentileStats::check_sample_sufficiency(100, 10_000);
+
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings[0].contains("p99.9"));
+    assert!(warnings[0].contains("max_time"));
+    assert!(warnings[1].contains("p99.99"));
+    assert!(warnings[1].contains("max_time"));
+    assert!(warnings[1].contains("only 100"));
 }
 
 #[test]
 fn sample_sufficiency_all_ok() {
-    let warnings: Vec<&str> = PercentileStats::check_sample_sufficiency(10_000);
+    let warnings: Vec<String> = PercentileStats::check_sample_sufficiency(10_000, 10_000);
 
     assert!(warnings.is_empty());
 }
 
 #[test]
 fn sample_sufficiency_very_low() {
-    // 10 samples: warns for p95, p99, p99.9, p99.99
-    let warnings: Vec<&str> = PercentileStats::check_sample_sufficiency(10);
+    // 10 samples requested and collected: warns for p95, p99, p99.9, p99.99
+    let warnings: Vec<String> = PercentileStats::check_sample_sufficiency(10, 10);
 
     assert_eq!(warnings.len(), 4);
 }

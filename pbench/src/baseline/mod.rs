@@ -25,7 +25,17 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// Current schema version for baseline files.
-const SCHEMA_VERSION: u32 = 1;
+///
+/// v1: initial schema (no `thread_count` field).
+/// v2: added `thread_count` to [`BaselineEntry`].
+const SCHEMA_VERSION: u32 = 2;
+
+/// Default thread count for backward-compatible deserialization of v1 baselines.
+///
+/// v1 files omit `thread_count`; serde fills in `1` via this function.
+const fn default_thread_count() -> u32 {
+    1
+}
 
 /// Top-level wrapper for a baseline JSON file.
 #[derive(Serialize, Deserialize)]
@@ -42,6 +52,12 @@ pub(crate) struct BaselineFile {
 pub(crate) struct BaselineEntry {
     /// Benchmark name (fully qualified path).
     pub name: String,
+
+    /// Thread count used for this benchmark run.
+    ///
+    /// Defaults to `1` when deserializing v1 baselines that lack this field.
+    #[serde(default = "default_thread_count")]
+    pub thread_count: u32,
 
     /// Serializable statistics snapshot.
     pub stats: SerializableStats,
@@ -114,7 +130,7 @@ impl StdFmt::Display for BaselineError {
             Self::IncompatibleVersion { found, expected } => {
                 write!(
                     f,
-                    "incompatible baseline schema version: found {found}, expected {expected}"
+                    "incompatible baseline schema version: found {found}, expected <={expected}"
                 )
             }
 
@@ -161,16 +177,19 @@ impl BaselineStore {
     pub(crate) fn save(
         dir: &Path,
         name: &str,
-        results: &[(&str, &PercentileStats)],
+        results: &[(&str, u32, &PercentileStats)],
     ) -> StdIo::Result<()> {
         StdFs::create_dir_all(dir)?;
 
         let entries: Vec<BaselineEntry> = results
             .iter()
             .map(
-                |&(bench_name, stats): &(&str, &PercentileStats)| BaselineEntry {
-                    name: bench_name.to_owned(),
-                    stats: SerializableStats::from_percentile_stats(stats),
+                |&(bench_name, thread_count, stats): &(&str, u32, &PercentileStats)| {
+                    BaselineEntry {
+                        name: bench_name.to_owned(),
+                        thread_count,
+                        stats: SerializableStats::from_percentile_stats(stats),
+                    }
                 },
             )
             .collect();
@@ -191,6 +210,8 @@ impl BaselineStore {
     /// Load a named baseline from disk.
     ///
     /// Reads from `dir/<name>.json` and validates the schema version.
+    /// Accepts v1 baselines (entries without `thread_count` default to 1)
+    /// and v2 baselines. Rejects versions newer than [`SCHEMA_VERSION`].
     ///
     /// # Errors
     ///
@@ -200,7 +221,7 @@ impl BaselineStore {
         let contents: String = StdFs::read_to_string(&path)?;
         let file: BaselineFile = SJSON::from_str(&contents)?;
 
-        if file.schema_version != SCHEMA_VERSION {
+        if !(1..=SCHEMA_VERSION).contains(&file.schema_version) {
             return Err(BaselineError::IncompatibleVersion {
                 found: file.schema_version,
                 expected: SCHEMA_VERSION,
@@ -212,25 +233,45 @@ impl BaselineStore {
 }
 
 impl SerializableStats {
-    /// Convert from [`PercentileStats`] to the serializable form.
+    /// Convert a `u128` picosecond value to `u64` with a debug assertion.
+    ///
+    /// # Panics
+    ///
+    /// Debug-panics if `picos` exceeds `u64::MAX` (impossible for
+    /// practical benchmark durations — `u64::MAX` picos is ~213 days).
     #[expect(
         clippy::cast_possible_truncation,
-        reason = "u128 picos -> u64: benchmark durations never exceed u64::MAX (~213 days)"
+        reason = "u128 picos -> u64: guarded by debug_assert"
     )]
+    pub(crate) fn picos_as_u64(picos: u128, label: &str) -> u64 {
+        debug_assert!(
+            picos <= u128::from(u64::MAX),
+            "{label} exceeds u64::MAX: {picos}"
+        );
+
+        picos as u64
+    }
+
+    /// Convert from [`PercentileStats`] to the serializable form.
+    ///
+    /// # Panics
+    ///
+    /// Debug-panics if any pico value exceeds `u64::MAX` (impossible for
+    /// practical benchmark durations, but guarded as a safety net).
     #[must_use]
-    pub(crate) const fn from_percentile_stats(stats: &PercentileStats) -> Self {
+    pub(crate) fn from_percentile_stats(stats: &PercentileStats) -> Self {
         Self {
             sample_count: stats.sample_count,
             iter_count: stats.iter_count,
-            min_picos: stats.min.picos as u64,
-            max_picos: stats.max.picos as u64,
-            mean_picos: stats.mean.picos as u64,
-            std_dev_picos: stats.std_dev.picos as u64,
-            p50_picos: stats.percentiles.p50.picos as u64,
-            p95_picos: stats.percentiles.p95.picos as u64,
-            p99_picos: stats.percentiles.p99.picos as u64,
-            p99_9_picos: stats.percentiles.p99_9.picos as u64,
-            p99_99_picos: stats.percentiles.p99_99.picos as u64,
+            min_picos: Self::picos_as_u64(stats.min.picos, "min_picos"),
+            max_picos: Self::picos_as_u64(stats.max.picos, "max_picos"),
+            mean_picos: Self::picos_as_u64(stats.mean.picos, "mean_picos"),
+            std_dev_picos: Self::picos_as_u64(stats.std_dev.picos, "std_dev_picos"),
+            p50_picos: Self::picos_as_u64(stats.percentiles.p50.picos, "p50_picos"),
+            p95_picos: Self::picos_as_u64(stats.percentiles.p95.picos, "p95_picos"),
+            p99_picos: Self::picos_as_u64(stats.percentiles.p99.picos, "p99_picos"),
+            p99_9_picos: Self::picos_as_u64(stats.percentiles.p99_9.picos, "p99_9_picos"),
+            p99_99_picos: Self::picos_as_u64(stats.percentiles.p99_99.picos, "p99_99_picos"),
         }
     }
 

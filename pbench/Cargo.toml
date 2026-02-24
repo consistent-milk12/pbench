@@ -1,14 +1,18 @@
 [package]
 name = "pbench"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Percentile-focused benchmarking for Rust — p50/p95/p99/p99.9/p99.99"
 license = "MIT"
+repository = "https://github.com/consistent-milk12/pbench"
+documentation = "https://docs.rs/pbench"
+homepage = "https://github.com/consistent-milk12/pbench"
+readme = "../README.md"
 keywords = ["benchmark", "percentile", "latency", "performance"]
 categories = ["development-tools::profiling"]
 
 [dependencies]
-pbench-macros = { path = "../pbench-macros" }
+pbench-macros = { version = "0.2.0", path = "../pbench-macros" }
 hdrhistogram = "7.5.4"
 
 [dependencies.serde]
@@ -22,9 +26,11 @@ optional = true
 
 [dev-dependencies]
 trybuild = "1.0.116"
-tempfile = "3.25.0"
-scc = "3.6.4"
-masstree = "0.8.1"
+tempfile = "3.26.0"
+scc = "3.6.5"
+mimalloc = "0.1.48"
+masstree = { version = "0.8.1", features = ["mimalloc"] }
+dashmap = "6.1.0"
 
 [features]
 default = []
@@ -44,4 +50,24 @@ harness = false
 
 [[bench]]
 name = "bench_scc"
+harness = false
+
+[[bench]]
+name = "bench_rwlock_btree"
+harness = false
+
+[[bench]]
+name = "contention_masstree"
+harness = false
+
+[[bench]]
+name = "contention_scc"
+harness = false
+
+[[bench]]
+name = "contention_rwlock_btree"
+harness = false
+
+[[bench]]
+name = "bench_dashmap"
 harness = false

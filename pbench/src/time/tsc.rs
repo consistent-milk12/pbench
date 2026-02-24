@@ -14,7 +14,7 @@ use std::fmt as StdFmt;
 use std::thread as StdThread;
 use std::time::{Duration, Instant};
 
-use crate::time::{FineDuration, fence::Fence};
+use crate::time::{FineDuration, TimerOps, fence::Fence};
 
 // ===========================================================================
 //  TscUnavailable
@@ -390,5 +390,24 @@ impl TscTimer {
         }
 
         best_pair
+    }
+}
+
+impl TimerOps for TscTimer {
+    type Stamp = u64;
+
+    #[inline(always)]
+    fn now(&self) -> u64 {
+        self.now()
+    }
+
+    #[inline(always)]
+    fn now_end(&self) -> u64 {
+        self.now_end()
+    }
+
+    #[inline(always)]
+    fn elapsed(&self, start: u64, end: u64) -> FineDuration {
+        self.elapsed(start, end)
     }
 }

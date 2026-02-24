@@ -11,3 +11,5 @@ pub mod table;
 pub(crate) mod json;
 
 pub mod csv;
+
+pub(crate) mod render;

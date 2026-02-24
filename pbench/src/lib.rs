@@ -131,6 +131,7 @@ pub mod entry;
 pub(crate) mod output;
 pub(crate) mod runner;
 pub mod stats;
+pub(crate) mod thread;
 pub mod time;
 pub(crate) mod util;
 

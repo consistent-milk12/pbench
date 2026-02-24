@@ -27,7 +27,6 @@ pub struct Defer<F: FnOnce()>(Option<F>);
 impl<F: FnOnce()> Defer<F> {
     /// Create an RAII guard that calls `f` when dropped.
     #[must_use]
-    #[expect(dead_code, reason = "Available for runner cleanup patterns")]
     pub(crate) const fn new(f: F) -> Self {
         Self(Some(f))
     }

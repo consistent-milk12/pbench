@@ -25,7 +25,7 @@ fn json_output_valid() {
         },
     };
 
-    let json_str: String = JsonRenderer::render(&[("bench_a", &stats)]);
+    let json_str: String = JsonRenderer::render(&[("bench_a", 1, &stats)]);
     let parsed: SJSON::Value = SJSON::from_str(&json_str).expect("output must be valid JSON");
 
     // Top-level structure
@@ -37,6 +37,7 @@ fn json_output_valid() {
     // Benchmark entry fields
     let entry: &SJSON::Value = &benchmarks[0];
     assert_eq!(entry["name"], "bench_a");
+    assert_eq!(entry["threads"], 1);
     assert_eq!(entry["sample_count"], 1000);
     assert_eq!(entry["iter_count"], 10_000);
     assert_eq!(entry["min_picos"], 100_500);
@@ -97,7 +98,8 @@ fn json_multiple_benchmarks() {
         },
     };
 
-    let json_str: String = JsonRenderer::render(&[("bench_a", &stats_a), ("bench_b", &stats_b)]);
+    let json_str: String =
+        JsonRenderer::render(&[("bench_a", 1, &stats_a), ("bench_b", 2, &stats_b)]);
     let parsed: SJSON::Value = SJSON::from_str(&json_str).expect("output must be valid JSON");
 
     let benchmarks: &Vec<SJSON::Value> = parsed["benchmarks"]
@@ -119,4 +121,62 @@ fn json_empty_results() {
         .as_array()
         .expect("benchmarks must be an array");
     assert!(benchmarks.is_empty());
+}
+
+// --- json_threads_field ---
+
+#[test]
+fn json_threads_field_present() {
+    let stats: PercentileStats = PercentileStats {
+        sample_count: 100,
+        iter_count: 1_000,
+        min: FineDuration { picos: 50_000 },
+        max: FineDuration { picos: 200_000 },
+        mean: FineDuration { picos: 100_000 },
+        std_dev: FineDuration { picos: 10_000 },
+        percentiles: PercentileSet {
+            p50: FineDuration { picos: 90_000 },
+            p95: FineDuration { picos: 150_000 },
+            p99: FineDuration { picos: 180_000 },
+            p99_9: FineDuration { picos: 195_000 },
+            p99_99: FineDuration { picos: 200_000 },
+        },
+    };
+
+    let json_str: String = JsonRenderer::render(&[("insert_1k", 4, &stats)]);
+    let parsed: SJSON::Value = SJSON::from_str(&json_str).expect("output must be valid JSON");
+
+    let entry: &SJSON::Value = &parsed["benchmarks"][0];
+    assert_eq!(entry["threads"], 4);
+    assert_eq!(entry["name"], "insert_1k");
+}
+
+#[test]
+fn json_threads_field_multi_thread_values() {
+    let stats: PercentileStats = PercentileStats {
+        sample_count: 100,
+        iter_count: 1_000,
+        min: FineDuration { picos: 50_000 },
+        max: FineDuration { picos: 200_000 },
+        mean: FineDuration { picos: 100_000 },
+        std_dev: FineDuration { picos: 10_000 },
+        percentiles: PercentileSet {
+            p50: FineDuration { picos: 90_000 },
+            p95: FineDuration { picos: 150_000 },
+            p99: FineDuration { picos: 180_000 },
+            p99_9: FineDuration { picos: 195_000 },
+            p99_99: FineDuration { picos: 200_000 },
+        },
+    };
+
+    let json_str: String =
+        JsonRenderer::render(&[("insert_1k", 1, &stats), ("insert_1k", 4, &stats)]);
+    let parsed: SJSON::Value = SJSON::from_str(&json_str).expect("output must be valid JSON");
+
+    let benchmarks: &Vec<SJSON::Value> = parsed["benchmarks"]
+        .as_array()
+        .expect("benchmarks must be an array");
+    assert_eq!(benchmarks.len(), 2);
+    assert_eq!(benchmarks[0]["threads"], 1);
+    assert_eq!(benchmarks[1]["threads"], 4);
 }

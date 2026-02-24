@@ -130,6 +130,27 @@ impl<T> TableColumnData<T> {
 }
 
 impl TableColumnData<&str> {
+    /// Compute the visible character count of a string, stripping ANSI
+    /// escape sequences (CSI sequences of the form `ESC[...m`).
+    fn visible_len(s: &str) -> usize {
+        let mut count: usize = 0;
+        let mut in_escape: bool = false;
+
+        for c in s.chars() {
+            if in_escape {
+                if c == 'm' {
+                    in_escape = false;
+                }
+            } else if c == '\x1b' {
+                in_escape = true;
+            } else {
+                count += 1;
+            }
+        }
+
+        count
+    }
+
     /// Write column values into `buf` with `│` separators and right-padding.
     ///
     /// Column widths are read-only. Each value is right-padded to the
@@ -138,9 +159,9 @@ impl TableColumnData<&str> {
         for (col_idx, value) in self.0.iter().enumerate() {
             let is_first: bool = col_idx == 0;
             let is_last: bool = col_idx == (TableColumn::COUNT - 1);
-            let value_width: usize = value.chars().count();
+            let value_width: usize = Self::visible_len(value);
 
-            // Column Seperator
+            // Column Separator
             if !is_first {
                 let sep: &str = if is_last && (value_width == 0) {
                     " \u{2502}"
@@ -255,6 +276,7 @@ impl<W: Write> TablePainter<W> {
         if is_top_level {
             let headers: TableColumnData<&str> =
                 TableColumnData::from_fn(|col: TableColumn| col.name());
+
             headers.write(buf, &self.column_widths);
         } else {
             // Empty column spacers for nested parents.
@@ -434,26 +456,98 @@ impl<W: Write> TablePainter<W> {
         Ok(())
     }
 
-    /// Write a comparison row with delta percentages.
+    /// Write a comparison row with delta percentages below a timing row.
     ///
-    /// TODO: Currently a no-op stub, implement later with
-    /// baseline regression detection. Returns `Ok(())` so callers
-    /// can wire it into the output pipeline without panics.
+    /// Computes per-column deltas between `current` and `baseline` statistics,
+    /// formatting each as a signed percentage. Regressions exceeding
+    /// `threshold_pct` are highlighted in red; improvements in green.
     ///
     /// # Errors
     ///
-    /// Returns [`StdIo::Error`] if writing to the underlying writer fails
-    /// (once implemented).
-    #[allow(dead_code, reason = "Stub for baseline comparison display")]
-    #[expect(clippy::pedantic, clippy::nursery)]
-    pub(crate) const fn write_comparison_row(
+    /// Returns [`StdIo::Error`] if writing to the underlying writer fails.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "u128 pico values fit f64 for percentage computation"
+    )]
+    pub(crate) fn write_comparison_row(
         &mut self,
-        _name: &str,
-        _current: &PercentileStats,
-        _baseline: &PercentileStats,
-        _threshold_pct: f64,
-        _is_last: bool,
+        current: &PercentileStats,
+        baseline: &PercentileStats,
+        threshold_pct: f64,
+        is_last: bool,
     ) -> StdIo::Result<()> {
+        let buf: &mut String = &mut self.write_buf;
+        buf.clear();
+
+        // Continuation prefix (same as throughput row).
+        buf.push_str(&self.current_prefix);
+
+        if !is_last {
+            buf.push('\u{2502}');
+        }
+
+        Self::right_pad(buf, self.max_name_span);
+
+        // Build delta strings for each column.
+        let deltas: TableColumnData<String> = TableColumnData::from_fn(|col: TableColumn| {
+            let (old_picos, new_picos): (u128, u128) = match col {
+                TableColumn::P50 => (
+                    baseline.percentiles.p50.picos,
+                    current.percentiles.p50.picos,
+                ),
+
+                TableColumn::P95 => (
+                    baseline.percentiles.p95.picos,
+                    current.percentiles.p95.picos,
+                ),
+
+                TableColumn::P99 => (
+                    baseline.percentiles.p99.picos,
+                    current.percentiles.p99.picos,
+                ),
+
+                TableColumn::P99_9 => (
+                    baseline.percentiles.p99_9.picos,
+                    current.percentiles.p99_9.picos,
+                ),
+
+                TableColumn::P99_99 => (
+                    baseline.percentiles.p99_99.picos,
+                    current.percentiles.p99_99.picos,
+                ),
+
+                TableColumn::Mean => (baseline.mean.picos, current.mean.picos),
+            };
+
+            let delta_pct: f64 = if old_picos == 0 {
+                0.0
+            } else {
+                let old_f: f64 = old_picos as f64;
+                let new_f: f64 = new_picos as f64;
+                ((new_f - old_f) / old_f) * 100.0
+            };
+
+            let is_regressed: bool = delta_pct > threshold_pct;
+            let is_improved: bool = delta_pct < -threshold_pct;
+
+            let text: String = format!("{delta_pct:+.1}%");
+
+            if is_regressed {
+                // ANSI red.
+                format!("\x1b[31m{text}\x1b[0m")
+            } else if is_improved {
+                // ANSI green.
+                format!("\x1b[32m{text}\x1b[0m")
+            } else {
+                text
+            }
+        });
+
+        deltas.as_ref::<str>().write(buf, &self.column_widths);
+        buf.push('\n');
+
+        self.writer.write_all(buf.as_bytes())?;
+
         Ok(())
     }
 

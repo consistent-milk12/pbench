@@ -159,7 +159,7 @@ fn write_comparison_row_no_panic() -> io::Result<()> {
 
     let _output: String = render(20, |p: &mut TablePainter<&mut Vec<u8>>| {
         p.start_parent("group", false)?;
-        p.write_comparison_row("bench_1", &stats, &stats, 5.0, true)?;
+        p.write_comparison_row(&stats, &stats, 5.0, true)?;
         p.finish_parent()
     })?;
 

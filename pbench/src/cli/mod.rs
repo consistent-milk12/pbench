@@ -1,8 +1,4 @@
 //! Hand-rolled CLI argument parsing.
-//!
-//! Parses benchmark runner options from `std::env::args()`. No external
-//! dependency (no clap) — keeps the dependency tree small at the cost of
-//! manual validation and help text. Compensated with rigorous unit tests.
 
 // =========================================================================
 //  Public enums
@@ -10,6 +6,7 @@
 
 use std::env as StdEnv;
 use std::process as StdProcess;
+use std::time::Duration;
 
 /// Output format for benchmark results.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -131,6 +128,19 @@ pub struct CliArgs {
 
     /// CLI override for sample size (iterations per sample).
     pub sample_size: Option<u32>,
+
+    /// Thread counts to run benchmarks with.
+    ///
+    /// Comma-separated list of thread counts (e.g. `1,2,4,8`).
+    /// `0` is expanded to available parallelism at resolution time.
+    pub threads: Option<Vec<u32>>,
+
+    /// CLI override for minimum benchmarking time.
+    ///
+    /// Parsed from `--min-time <DURATION>` where DURATION is
+    /// `<integer><unit>` (e.g. `500ms`, `2s`, `1500us`, `100ns`).
+    /// Decimal values are rejected; overflow returns an error.
+    pub min_time: Option<Duration>,
 }
 
 impl Default for CliArgs {
@@ -150,6 +160,8 @@ impl Default for CliArgs {
             sort: SortBy::default(),
             sample_count: None,
             sample_size: None,
+            threads: None,
+            min_time: None,
         }
     }
 }
@@ -334,6 +346,33 @@ impl CliArgs {
                     result.sample_size = Some(parsed);
                 }
 
+                "--threads" => {
+                    let val: &str = Self::next_value(args, &mut i, "--threads")?;
+
+                    let parsed: Vec<u32> = val
+                        .split(',')
+                        .map(|s: &str| {
+                            s.trim()
+                                .parse::<u32>()
+                                .map_err(|_: std::num::ParseIntError| {
+                                    ParseError::new(format!(
+                                        "invalid thread count '{s}'. \
+                                     Expected comma-separated positive integers (e.g. 1,2,4)"
+                                    ))
+                                })
+                        })
+                        .collect::<Result<Vec<u32>, ParseError>>()?;
+
+                    result.threads = Some(parsed);
+                }
+
+                "--min-time" => {
+                    let val: &str = Self::next_value(args, &mut i, "--min-time")?;
+                    let parsed: Duration = Self::parse_duration(val)?;
+
+                    result.min_time = Some(parsed);
+                }
+
                 "--format" => {
                     let val: &str = Self::next_value(args, &mut i, "--format")?;
 
@@ -367,8 +406,8 @@ impl CliArgs {
                     return Err(ParseError::new(format!(
                         "unknown flag '{other}'. Available flags: --filter, --skip, --list, \
                          --test, --output, --sort, --threshold, --save-baseline, --baseline, \
-                         --sample-count, --sample-size, --ignored, --include-ignored, \
-                         --bytes-format, --format, --help"
+                         --sample-count, --sample-size, --min-time, --threads, --ignored, \
+                         --include-ignored, --bytes-format, --format, --help"
                     )));
                 }
 
@@ -392,6 +431,64 @@ impl CliArgs {
         args.get(*i)
             .copied()
             .ok_or_else(|| ParseError::new(format!("flag '{flag}' requires a value")))
+    }
+
+    /// Parse a duration string like `500ms`, `2s`, `1500us`, `100ns`.
+    ///
+    /// Only integer values are accepted (no decimals). Overflow is checked
+    /// and returns an error rather than silently truncating.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError`] if the format is invalid, the number contains
+    /// decimals, or the resulting nanosecond count overflows `u64`.
+    fn parse_duration(s: &str) -> Result<Duration, ParseError> {
+        let s: &str = s.trim();
+
+        // Find the boundary between digits and unit suffix.
+        let num_end: usize = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+
+        let num_str: &str = &s[..num_end];
+        let unit: &str = &s[num_end..];
+
+        if num_str.is_empty() {
+            return Err(ParseError::new(format!(
+                "invalid duration '{s}'. Expected format: <integer><unit> (e.g. 500ms, 2s)"
+            )));
+        }
+
+        let value: u64 = num_str
+            .parse::<u64>()
+            .map_err(|_: std::num::ParseIntError| {
+                ParseError::new(format!(
+                    "invalid duration number '{num_str}'. Expected a non-negative integer"
+                ))
+            })?;
+
+        let nanos_per_unit: u64 = match unit {
+            "s" => 1_000_000_000,
+            "ms" => 1_000_000,
+            "us" | "µs" => 1_000,
+            "ns" => 1,
+            "" => {
+                return Err(ParseError::new(format!(
+                    "missing unit in duration '{s}'. Expected s, ms, us, or ns (e.g. 500ms)"
+                )));
+            }
+            other => {
+                return Err(ParseError::new(format!(
+                    "unknown duration unit '{other}'. Valid units: s, ms, us, ns"
+                )));
+            }
+        };
+
+        let nanos: u64 = value.checked_mul(nanos_per_unit).ok_or_else(|| {
+            ParseError::new(format!(
+                "duration '{s}' overflows (max ~584 years in nanoseconds)"
+            ))
+        })?;
+
+        Ok(Duration::from_nanos(nanos))
     }
 
     /// Parse CLI arguments from `std::env::args()`.
@@ -454,6 +551,8 @@ OPTIONS:
     --sort <ATTR>            Sort order: name (default), p50, p99, mean
     --sample-count <N>       Number of samples (default: 1000)
     --sample-size <N>        Iterations per sample (default: adaptive)
+    --min-time <DUR>         Minimum benchmarking time (e.g. 500ms, 2s)
+    --threads <N,N,...>      Thread counts (comma-separated, default: 1)
     --threshold <PCT>        Regression threshold percentage (default: 5.0)
     --save-baseline <NAME>   Save results as named baseline
     --baseline <NAME>        Compare results against named baseline

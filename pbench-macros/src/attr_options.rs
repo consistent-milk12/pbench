@@ -208,6 +208,23 @@ impl AttrOptions {
                         &wrapped_value
                     }
 
+                    // Thread counts: user writes `threads = [1, 2, 4]` which
+                    // parses as `Expr::Array`. `BenchOptions::threads` is
+                    // `Option<Vec<u32>>`, so we wrap the elements in `vec![]`.
+                    "threads" => {
+                        if let Expr::Array(ref arr) = *value {
+                            let elems: &syn::punctuated::Punctuated<Expr, syn::Token![,]> =
+                                &arr.elems;
+                            wrapped_value = quote! { ::std::vec![#elems] };
+                        } else {
+                            // Non-array expression: pass through as-is.
+                            // Will produce a compile error if type mismatches.
+                            wrapped_value = value.to_token_stream();
+                        }
+
+                        &wrapped_value
+                    }
+
                     _ => value,
                 };
 
